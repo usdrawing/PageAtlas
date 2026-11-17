@@ -6,6 +6,7 @@
     search: '<circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/>',
     outline: '<path d="M9 6h12M9 12h12M9 18h12M3 6h1m-1 6h1m-1 6h1"/>',
     messages: '<path d="M4 4h16v12H9l-5 4zM8 9h8m-8 3h5"/>',
+    videos: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m10 8 6 4-6 4z"/>',
     images: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="1"/><path d="m4 17 5-4 3 2 4-5 4 5"/>',
     files: '<path d="M6 3h8l4 4v14H6zm8 0v5h4M9 13h6m-6 4h6"/>',
     links: '<path d="m10 8 3-3a4 4 0 0 1 6 6l-3 3m-2 2-3 3a4 4 0 0 1-6-6l3-3m1 5 6-6"/>',
@@ -30,7 +31,7 @@
   const kb = 'https://github.com/usdrawing/PageAtlas/blob/main/docs/';
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   let preferences = defaults, host, ui, observer, timer, pulse, filter = 'overview';
-  let mediaFilter = 'images', palette = [], paletteDirty = true, gallery, dockSheet, toastTimer;
+  let overviewTitle, mediaFilter = 'images', palette = [], paletteDirty = true, gallery, dockSheet, toastTimer;
   const hoverTimers = new Set();
   const tr = key => (atlasGalleryLanguages[preferences.lang] || atlasGalleryLanguages.en)[key];
   let query = '', settingsOpen = false, records = [], current;
@@ -41,7 +42,7 @@
     paletteDirty = true;
     if (filter === 'colors') { renderResults(); return; }
     const root = (gmail || chatgpt) ? document.querySelector('main,[role="main"]') || document.body : document.body;
-    const selector = 'h1,h2,h3,h4,h5,h6,[role=heading],img,svg,[class*="material-icons"],[class*="material-symbols"],[role=img],span,a[href],[download],[download_url],p,li,blockquote,pre,td,[role=article],[data-message-author-role],[data-message-id],[data-testid="message-container"],.a3s';
+    const selector = 'h1,h2,h3,h4,h5,h6,[role=heading],img,video,svg,[class*="material-icons"],[class*="material-symbols"],[role=img],span,a[href],[download],[download_url],p,li,blockquote,pre,td,[role=article],[data-message-author-role],[data-message-id],[data-testid="message-container"],.a3s';
     const items = [];
     const seen = new Set();
     for (const node of root.querySelectorAll(selector)) {
@@ -51,30 +52,34 @@
       if (style.visibility !== 'visible' || style.contentVisibility === 'hidden') continue;
       if (node.matches('span') && node.childElementCount) continue;
       let label = clean(node.getAttribute('aria-label') || node.getAttribute('title'));
-      let detail = '', type, src, level, url, source, svg, glyph, font;
+      let detail = '', type, src, level, url, source, svg, glyph, font, poster;
       if (node.matches('h1,h2,h3,h4,h5,h6,[role=heading]')) {
         type = 'outline';
         level = Number(node.getAttribute('aria-level') || node.tagName.slice(1)) || 1;
         label ||= clean(node.innerText);
       } else if (node instanceof HTMLImageElement) {
-        const rect = node.getBoundingClientRect();
-        if (rect.width < 12 || rect.height < 12) continue;
-        const favicon = rect.width <= 32 && rect.height <= 32;
-        type = favicon ? 'icons' : 'images';
-        source = favicon ? tr('imageSource') : '';
+        type = 'images';
         src = atlasInspect.safeURL(node.currentSrc || node.src, true);
         if (!src) continue;
         label ||= clean(node.alt);
-        if (!label) {
-          try { label = decodeURIComponent(new URL(src).pathname.split('/').pop()).slice(0, 80); } catch {}
-        }
-        label ||= t(type === 'icons' ? 7 : 4);
+        if (!label && !/^(?:data:|blob:)/i.test(src)) label = atlasInspect.filename(src).slice(0, 80);
+        label ||= tr('imageSource');
+      } else if (node instanceof HTMLVideoElement) {
+        type = 'videos';
+        url = atlasInspect.safeMediaURL(node.currentSrc || node.getAttribute('src') || node.querySelector('source[src]')?.getAttribute('src'));
+        poster = atlasInspect.safeURL(node.getAttribute('poster'), true);
+        label ||= /^https?:/i.test(url) && atlasInspect.filename(url) || tr('video');
       } else if (node.matches('svg,[role=img],span,[class*="material-icons"],[class*="material-symbols"]')) {
         const iconInfo = atlasInspect.identify(node);
         if (iconInfo) {
           ({ source, svg, glyph, font } = iconInfo);
           label ||= iconInfo.label || source;
           if (!svg && !glyph) continue;
+          if (svg && source === 'SVG' && !atlasInspect.isSVGIcon(node)) {
+            type = 'images';
+            src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+            label = iconInfo.label || 'SVG';
+          }
         } else {
           for (const [glyph] of node.innerText?.matchAll(atlasInspect.glyphs) || []) {
             const key = 'unicode:' + glyph;
@@ -84,7 +89,7 @@
           }
           continue;
         }
-        type = 'icons';
+        type ||= 'icons';
       } else if (node.matches('[download],[download_url],a[href]')) {
         const href = node.getAttribute('href') || '';
         url = atlasInspect.safeURL(href);
@@ -96,6 +101,10 @@
         const isFile = node.hasAttribute('download') || attachment || filePattern.test(url) || filePattern.test(label) || isDrive;
         if (!isFile && (!url || /^(?:#|javascript:)/i.test(url))) continue;
         type = isFile ? 'files' : 'links';
+        if (url && /\.(?:gif|png|apng|jpe?g|avif|webp|svgz?|bmp|ico|tiff?|jxl|heic)(?:[?#]|$)/i.test(url)) {
+          type = 'images';
+          src = url;
+        } else if (url && /\.(?:mp4|webm|ogv|mov|m4v|mkv)(?:[?#]|$)/i.test(url)) type = 'videos';
         if (!label && attachment) label = attachment.split(':').slice(1, 2)[0];
         if (!label && url) {
           try { label = decodeURIComponent(new URL(url, location.href).pathname.split('/').pop()) || new URL(url, location.href).hostname; } catch {}
@@ -127,13 +136,18 @@
       }
       if (!label) continue;
       label = label.slice(0, 250);
-      if (['icons', 'images', 'files'].includes(type)) {
-        const key = type + ':' + (svg || glyph || src || url || label);
+      if (['icons', 'images', 'files', 'videos'].includes(type)) {
+        const key = type + ':' + (svg || glyph || src || url || (type === 'videos' ? items.length : label));
         if (seen.has(key)) continue;
         seen.add(key);
       }
-      items.push({ node, type, label, src, level, url, source, svg, glyph, font, match: normalize(label + ' ' + (source || '')) });
+      items.push({ node, type, label, src, level, url, poster, source, svg, glyph, font, match: normalize(label + ' ' + (source || '')) });
     }
+    const main = document.querySelector('main,[role=main]') || root;
+    const candidates = items.filter(item => item.type === 'outline' && item.level === 1);
+    const heading = candidates.find(item => main.contains(item.node)) || candidates[0];
+    const labelled = clean(main.getAttribute('aria-label') || main.getAttribute('aria-labelledby')?.split(/\s+/).map(id => document.getElementById(id)?.textContent).filter(Boolean).join(' '));
+    overviewTitle = heading || { node: main, label: labelled || clean(document.title) || location.hostname };
     records = items;
     renderResults();
     updateCurrent();
@@ -168,6 +182,7 @@
     if (!host || settingsOpen) return;
     for (const timer of hoverTimers) clearTimeout(timer);
     hoverTimers.clear();
+    ui.resultHeader.hidden = true;
     if (filter === 'colors') return renderPalette();
     const words = normalize(query.trim()).split(/\s+/).filter(Boolean);
     const filtered = records.filter(item => {
@@ -184,8 +199,21 @@
       empty.append(make('strong', '', t(words.length ? 21 : 23)), make('span', '', t(words.length ? 22 : 24)));
       fragment.append(empty);
     }
+    if (filter === 'overview' && overviewTitle) {
+      const heading = make('button', 'overview-title', overviewTitle.label);
+      heading.dir = 'auto';
+      heading.addEventListener('click', () => navigate(overviewTitle));
+      ui.resultHeader.replaceChildren(heading);
+      ui.resultHeader.hidden = false;
+    } else if (filter === 'icons' && filtered.length) {
+      const open = make('button', 'gallery-action open-gallery', tr('openGallery'));
+      open.addEventListener('click', () => gallery.open('icons', filtered, filtered[0], open));
+      ui.resultHeader.replaceChildren(open);
+      ui.resultHeader.hidden = false;
+    }
     const positions = new Map(records.map((item, index) => [item, index]));
     filtered.forEach(item => {
+      if (!words.length && filter === 'overview' && item === overviewTitle) return;
       const row = make('button', 'item');
       row.type = 'button';
       row.dataset.index = positions.get(item);
@@ -196,11 +224,12 @@
         if (item.font) glyph.style.fontFamily = item.font;
         row.append(glyph);
       } else if (item.svg) {
-        const svg = new DOMParser().parseFromString(item.svg, 'image/svg+xml').documentElement;
-        row.append(document.importNode(svg, true));
-      } else if (item.src && /^(?:https?:|data:image\/|blob:)/i.test(item.src)) {
+        const visual = atlasInspect.svgPreview(item.svg);
+        if (item.type === 'images') visual.classList.add('svg-thumb');
+        row.append(visual);
+      } else if (item.src || item.poster) {
         const thumb = make('img');
-        thumb.src = item.src;
+        thumb.src = item.poster || item.src;
         thumb.loading = 'lazy';
         thumb.alt = '';
         thumb.referrerPolicy = 'no-referrer';
@@ -217,12 +246,12 @@
       copy.append(make('strong', '', title));
       if (item.source || item.detail && item.detail !== title) copy.append(make('small', '', item.source || item.detail));
       row.append(copy);
-      if (['images', 'files', 'icons'].includes(item.type)) {
+      if (['images', 'files', 'videos'].includes(item.type)) {
         const open = () => gallery.open(item.type, filtered, item, row);
         row.addEventListener('click', open);
         let hover;
         row.addEventListener('pointerenter', event => {
-          if (event.pointerType !== 'mouse') return;
+          if (item.type === 'videos' || event.pointerType !== 'mouse') return;
           hover = setTimeout(() => { hoverTimers.delete(hover); if (row.matches(':hover')) open(); }, 600);
           hoverTimers.add(hover);
         });
@@ -307,8 +336,8 @@
       return button;
     }));
     ui.media.hidden = filter !== 'media';
-    ui.media.replaceChildren(...['images', 'files'].map((kind, index) => {
-      const button = make('button', 'filter', t(index + 4));
+    ui.media.replaceChildren(...['images', 'videos', 'files'].map(kind => {
+      const button = make('button', 'filter', kind === 'videos' ? tr('videos') : t(kind === 'images' ? 4 : 5));
       button.dataset.media = kind;
       button.setAttribute('aria-pressed', String(kind === mediaFilter));
       button.addEventListener('click', () => {
@@ -351,6 +380,7 @@
     settingsOpen = force ?? !settingsOpen;
     ui.settings.hidden = !settingsOpen;
     ui.controls.hidden = ui.status.hidden = ui.results.hidden = settingsOpen;
+    if (settingsOpen) ui.resultHeader.hidden = true;
     applyPreferences();
   }
 
@@ -398,6 +428,8 @@
     toast.hidden = true;
     const status = make('div', 'status');
     status.setAttribute('aria-live', 'polite');
+    const resultHeader = make('div', 'result-header');
+    resultHeader.hidden = true;
     const results = make('div', 'results');
     const settings = make('section', 'settings');
     const footer = make('footer');
@@ -433,10 +465,10 @@
     });
     searchLabel.append(search);
     controls.append(searchLabel, filters, media);
-    shell.append(header, controls, status, results, settings, footer);
+    shell.append(header, controls, status, resultHeader, results, settings, footer);
     shadow.append(shell, toast);
     gallery = createAtlasGallery({ shadow, make, tr, preferences: () => preferences, navigate, feedback: announce });
-    ui = { shell, subtitle, gear, close, controls, search, filters, media, status, results, settings, privacy, terms, toast };
+    ui = { shell, subtitle, gear, close, controls, search, filters, media, status, resultHeader, results, settings, privacy, terms, toast };
     dockSheet = new CSSStyleSheet();
     dockSheet.replaceSync('html:has(> page-atlas-panel[data-side="right"]) { margin-right: min(288px, 50vw) !important; max-width: calc(100% - min(288px, 50vw)) !important; } html:has(> page-atlas-panel[data-side="left"]) { margin-left: min(288px, 50vw) !important; max-width: calc(100% - min(288px, 50vw)) !important; }');
     document.adoptedStyleSheets = [...document.adoptedStyleSheets, dockSheet];
@@ -447,9 +479,12 @@
       if (!timer) timer = setTimeout(() => { timer = undefined; scan(); }, 250);
     });
     observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true,
-      attributeFilter: ['src', 'href', 'aria-expanded', 'hidden', 'aria-hidden', 'download'] });
+      attributeFilter: ['src', 'srcset', 'poster', 'href', 'aria-expanded', 'hidden', 'aria-hidden', 'download', 'class', 'style'] });
+    document.addEventListener('loadedmetadata', onMediaLoad, true);
     document.addEventListener('scroll', onScroll, { capture: true, passive: true });
   }
+
+  function onMediaLoad() { if (host) scan(); }
 
   let frame;
   function onScroll() {
@@ -462,6 +497,7 @@
     timer = undefined;
     cancelAnimationFrame(frame);
     frame = undefined;
+    document.removeEventListener('loadedmetadata', onMediaLoad, true);
     document.removeEventListener('scroll', onScroll, true);
     for (const timer of hoverTimers) clearTimeout(timer);
     hoverTimers.clear();

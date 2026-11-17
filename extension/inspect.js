@@ -1,7 +1,7 @@
 const atlasInspect = (() => {
   const svgNS = 'http://www.w3.org/2000/svg';
-  const geometry = new Set('svg g path circle ellipse rect line polyline polygon'.split(' '));
-  const attributes = 'viewBox d cx cy r rx ry x y x1 y1 x2 y2 width height points fill stroke stroke-width stroke-linecap stroke-linejoin fill-rule clip-rule transform opacity'.split(' ');
+  const geometry = new Set('svg g path circle ellipse rect line polyline polygon text tspan defs linearGradient radialGradient stop clipPath mask symbol use'.split(' '));
+  const attributes = 'viewBox d cx cy r rx ry x y x1 y1 x2 y2 width height points fill stroke stroke-width stroke-linecap stroke-linejoin fill-rule clip-rule transform opacity id href offset stop-color stop-opacity gradientUnits gradientTransform spreadMethod fx fy clip-path mask font-size font-weight text-anchor'.split(' ');
   const glyphs = /[\p{Extended_Pictographic}\u2190-\u21ff\u2600-\u27bf](?:\uFE0F|\p{Emoji_Modifier}|\u200D\p{Extended_Pictographic})*/gu;
   const safeURL = (value, image = false) => {
     if (!value) return '';
@@ -16,7 +16,13 @@ const atlasInspect = (() => {
       const result = document.createElementNS(svgNS, element.localName);
       for (const key of attributes) {
         const value = element.getAttribute(key);
-        if (value && !/url\s*\(/i.test(value)) result.setAttribute(key, value);
+        if (!value) continue;
+        if (key === 'href' && !/^#[\w.:-]+$/.test(value)) continue;
+        if (/url\s*\(/i.test(value) && !/^url\(#[\w.:-]+\)$/.test(value)) continue;
+        result.setAttribute(key, value);
+      }
+      if (['text', 'tspan'].includes(element.localName)) for (const text of element.childNodes) {
+        if (text.nodeType === Node.TEXT_NODE) result.append(text.textContent);
       }
       for (const child of element.children) {
         const safe = clone(child);
@@ -25,10 +31,10 @@ const atlasInspect = (() => {
       return result;
     };
     const svg = clone(node);
-    if (!svg?.querySelector('path,circle,ellipse,rect,line,polyline,polygon')) return '';
+    if (!svg?.querySelector('path,circle,ellipse,rect,line,polyline,polygon,text,use')) return '';
     if (!svg.hasAttribute('viewBox')) svg.setAttribute('viewBox', '0 0 ' + (parseFloat(node.getAttribute('width')) || 24) + ' ' + (parseFloat(node.getAttribute('height')) || 24));
-    svg.setAttribute('width', '24');
-    svg.setAttribute('height', '24');
+    svg.removeAttribute('width');
+    svg.removeAttribute('height');
     for (const key of ['fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin']) {
       if (!svg.hasAttribute(key)) svg.setAttribute(key, getComputedStyle(node).getPropertyValue(key));
     }
@@ -81,5 +87,16 @@ const atlasInspect = (() => {
           '"/><text x="' + (x + 4) + '" y="' + (y + 69) + '" font-size="12" font-family="sans-serif">' + color + '</text>';
       }).join('') + '</svg>';
   }
-  return { safeURL, identify, glyphs, colors, paletteSVG };
+  function filename(url) {
+    try { return decodeURIComponent(new URL(url).pathname.split('/').pop()); } catch { return ''; }
+  }
+  const safeMediaURL = value => /^data:video\//i.test(value || '') ? value : safeURL(value);
+  function isSVGIcon(node) {
+    const rect = node.getBoundingClientRect();
+    return (rect.width <= 32 && rect.height <= 32) || Boolean(node.closest('button,[role=button]'));
+  }
+  function svgPreview(code) {
+    return document.importNode(new DOMParser().parseFromString(code, 'image/svg+xml').documentElement, true);
+  }
+  return { svgPreview, safeURL, safeMediaURL, filename, identify, isSVGIcon, glyphs, colors, paletteSVG };
 })();

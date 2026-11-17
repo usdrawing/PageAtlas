@@ -19,7 +19,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (message.type !== 'download' || sender.id !== chrome.runtime.id || !sender.tab) return;
-  if (typeof message.url !== 'string' || !/^https?:|^data:image\//i.test(message.url)) {
+  if (typeof message.url !== 'string' || !/^(?:https?:|data:(?:image|video)\/)/i.test(message.url)) {
     reply({ ok: false });
     return;
   }

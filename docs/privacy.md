@@ -1,6 +1,6 @@
 # PageAtlas privacy policy
 
-Effective November 17, 2026. This policy covers PageAtlas 0.2.0.
+Effective November 17, 2026. This policy covers PageAtlas 0.2.1.
 
 PageAtlas reads the HTML content available in your browser tab while the panel is open on supported pages. It uses headings, visible text, links, image references, file labels and message text to create a local index and navigate to results. Searches and indexed content are held in browser memory. The extension stores the panel’s open state, position, theme and language in Chrome’s local extension storage.
 

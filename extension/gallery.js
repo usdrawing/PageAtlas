@@ -79,12 +79,13 @@ function createAtlasGallery({ shadow, make, tr, preferences, navigate, feedback 
     return img;
   }
   function thumbnail(item) {
-    if (item.src) {
-      const img = image(item.src, '');
+    if (item.svg) return atlasInspect.svgPreview(item.svg);
+    if (item.poster || item.src) {
+      const img = image(item.poster || item.src, '');
       img.loading = 'lazy';
       return img;
     }
-    const type = make('span', 'file-format', atlasDocuments.type(item)?.toUpperCase() || 'FILE');
+    const type = make('span', 'file-format', (item.type === 'videos' ? tr('video') : atlasDocuments.type(item)?.toUpperCase() || 'FILE'));
     return type;
   }
   function renderDocument(item, stage) {
@@ -140,8 +141,7 @@ function createAtlasGallery({ shadow, make, tr, preferences, navigate, feedback 
   function iconVisual(item) {
     const visual = make('div', 'icon-visual');
     if (item.svg) {
-      const parsed = new DOMParser().parseFromString(item.svg, 'image/svg+xml').documentElement;
-      visual.append(document.importNode(parsed, true));
+      visual.append(atlasInspect.svgPreview(item.svg));
     } else if (item.src) visual.append(thumbnail(item));
     else {
       visual.textContent = item.glyph || '◇';
@@ -187,7 +187,9 @@ function createAtlasGallery({ shadow, make, tr, preferences, navigate, feedback 
     const actions = make('div', 'gallery-toolbar');
     const url = item.src || item.url;
     if (kind !== 'icons') {
-      if (url) actions.append(button(tr('copyLink'), () => copy(url), 'copy'), button(tr('download'), () => download(url), 'download'));
+      if (url && !/^(?:data:|blob:)/i.test(url)) actions.append(button(tr('copyLink'), () => copy(url), 'copy'));
+      if (item.svg && kind === 'images') actions.append(button(tr('download'), () => save(item.svg, 'pageatlas-image.svg'), 'download'));
+      else if (url && !(kind === 'videos' && url.startsWith('blob:'))) actions.append(button(tr('download'), () => download(url), 'download'));
       actions.append(button(tr('jump'), () => { modal.close(); navigate(item); }));
     }
     const close = button(tr('close'), () => modal.close(), 'close');
@@ -198,7 +200,23 @@ function createAtlasGallery({ shadow, make, tr, preferences, navigate, feedback 
     if (kind === 'icons') { section.append(iconGrid()); return; }
     const stage = make('div', 'gallery-stage');
     if (kind === 'files') renderDocument(item, stage);
-    else {
+    else if (kind === 'videos') {
+      if (item.url && !item.node.srcObject) {
+        const video = make('video', 'video-preview');
+        video.controls = true;
+        video.playsInline = true;
+        video.preload = 'metadata';
+        if (item.poster) video.poster = item.poster;
+        video.src = item.url;
+        video.addEventListener('error', () => video.replaceWith(make('p', '', tr('videoUnavailable'))), { once: true });
+        stage.append(video);
+      } else stage.append(make('p', '', tr('videoUnavailable')));
+    } else if (item.svg) {
+      const preview = atlasInspect.svgPreview(item.svg);
+      preview.classList.add('svg-preview');
+      preview.setAttribute('aria-label', item.label);
+      stage.append(preview);
+    } else {
       const preview = image(item.src, item.label);
       preview.addEventListener('error', () => preview.replaceWith(make('p', '', tr('previewUnavailable'))), { once: true });
       stage.append(preview);
@@ -244,7 +262,7 @@ function createAtlasGallery({ shadow, make, tr, preferences, navigate, feedback 
   });
   modal.addEventListener('keydown', event => {
     if (event.key === 'Escape') event.stopPropagation();
-    if (kind === 'icons' || items.length < 2 || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    if (event.target instanceof HTMLVideoElement || kind === 'icons' || items.length < 2 || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
     event.preventDefault();
     move(event.key === 'ArrowRight' ? 1 : -1);
   });

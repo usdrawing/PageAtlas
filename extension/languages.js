@@ -17,3 +17,15 @@ const atlasGalleryLanguages = Object.fromEntries(Object.entries({
 }).map(([lang, strings]) => [lang, Object.fromEntries(
   'overview media icons colors copyCode copySvg saveSvg copyLink download close previous next jump open loading previewUnavailable copied unavailable slide sheet imageSource'.split(' ').map((key, index) => [key, strings[index]])
 )]));
+
+const atlasVideoStrings = {
+  en: ['Videos', 'Video', 'Open gallery', 'Use Jump to item to play this video on the page.'],
+  he: ['סרטונים', 'סרטון', 'פתיחת גלריה', 'אפשר לקפוץ לסרטון ולהפעיל אותו בעמוד.'],
+  es: ['Vídeos', 'Vídeo', 'Abrir galería', 'Ve al elemento para reproducir el vídeo en la página.'],
+  fr: ['Vidéos', 'Vidéo', 'Ouvrir la galerie', 'Accédez à la vidéo pour la lire sur la page.'],
+  de: ['Videos', 'Video', 'Galerie öffnen', 'Springe zum Video, um es auf der Seite abzuspielen.'],
+  pt: ['Vídeos', 'Vídeo', 'Abrir galeria', 'Vá até o vídeo para reproduzi-lo na página.']
+};
+for (const [lang, [videos, video, openGallery, videoUnavailable]] of Object.entries(atlasVideoStrings)) {
+  Object.assign(atlasGalleryLanguages[lang], { videos, video, openGallery, videoUnavailable });
+}
