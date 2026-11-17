@@ -4,6 +4,18 @@ function createAtlasGallery({ shadow, make, tr, preferences, navigate, feedback 
   modal.append(section);
   shadow.append(modal);
   let items = [], selected = 0, kind, opener, controller;
+  const previewURLs = new Set();
+  function previewURL(blob) {
+    const url = URL.createObjectURL(blob);
+    previewURLs.add(url);
+    return url;
+  }
+  function clearDocument() {
+    controller?.abort();
+    controller = undefined;
+    for (const url of previewURLs) URL.revokeObjectURL(url);
+    previewURLs.clear();
+  }
   const controls = {
     close: '<path d="M18.3 5.71 12 12l6.3 6.29-1.41 1.42L12 13.41l-4.89 4.9-1.42-1.42L10.59 12l-4.9-4.89 1.42-1.42L12 10.59l4.89-4.9z"/>',
     next: '<path d="m12 4-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/>',
@@ -78,6 +90,23 @@ function createAtlasGallery({ shadow, make, tr, preferences, navigate, feedback 
     img.src = src;
     return img;
   }
+  const pendingFrames = new Map();
+  const frameObserver = new IntersectionObserver(entries => {
+    for (const { target, isIntersecting } of entries) {
+      if (!isIntersecting) continue;
+      frameObserver.unobserve(target);
+      const url = pendingFrames.get(target);
+      pendingFrames.delete(target);
+      if (url) target.src = url;
+    }
+  });
+  function pruneFrames() {
+    for (const video of pendingFrames.keys()) {
+      if (video.isConnected) continue;
+      frameObserver.unobserve(video);
+      pendingFrames.delete(video);
+    }
+  }
   function thumbnail(item) {
     if (item.svg) return atlasInspect.svgPreview(item.svg);
     if (item.poster || item.src) {
@@ -85,67 +114,139 @@ function createAtlasGallery({ shadow, make, tr, preferences, navigate, feedback 
       img.loading = 'lazy';
       return img;
     }
+    if (item.type === 'videos' && item.url && !item.node.srcObject) {
+      const film = make('span', 'video-thumb');
+      const video = make('video');
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = 'metadata';
+      video.setAttribute('aria-hidden', 'true');
+      video.addEventListener('loadedmetadata', () => {
+        if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA && video.seekable.length) {
+          video.currentTime = video.seekable.start(0) + Math.min(0.05, (video.seekable.end(0) - video.seekable.start(0)) / 2);
+        }
+      }, { once: true });
+      video.addEventListener('loadeddata', () => film.classList.add('has-frame'), { once: true });
+      film.append(make('span', 'file-format', tr('video')), video);
+      pendingFrames.set(video, item.url);
+      frameObserver.observe(video);
+      return film;
+    }
     const type = make('span', 'file-format', (item.type === 'videos' ? tr('video') : atlasDocuments.type(item)?.toUpperCase() || 'FILE'));
     return type;
   }
   function renderDocument(item, stage) {
-    if (atlasDocuments.type(item) === 'pdf' && item.url) {
-      const frame = make('iframe', 'pdf-preview');
-      frame.title = item.label;
-      frame.src = item.url;
-      const open = make('a', 'document-open', tr('open'));
-      open.href = item.url;
-      open.target = '_blank';
-      open.rel = 'noopener noreferrer';
-      stage.append(frame, open);
-      return;
-    }
     const contents = make('div', 'document-preview');
     contents.append(make('p', '', tr('loading')));
     stage.append(contents);
     const abort = new AbortController();
     controller = abort;
     const loadingTimeout = setTimeout(() => abort.abort('timeout'), 12000);
+    const openOriginal = () => {
+      const open = make('a', 'document-open', tr('open'));
+      open.href = item.url;
+      open.target = '_blank';
+      open.rel = 'noopener noreferrer';
+      return open;
+    };
+    const addPDF = url => {
+      contents.remove();
+      const frame = make('iframe', 'pdf-preview');
+      frame.title = item.label;
+      frame.src = url;
+      stage.append(frame, openOriginal());
+    };
     const unavailable = () => {
+      if (item.url && atlasDocuments.type(item) === 'pdf') return addPDF(item.url);
       contents.replaceChildren(make('p', '', tr('previewUnavailable')));
-      if (item.url) {
-        const open = make('a', 'document-open', tr('open'));
-        open.href = item.url;
-        open.target = '_blank';
-        open.rel = 'noopener noreferrer';
-        contents.append(open);
-      }
+      if (item.url) contents.append(openOriginal());
     };
     if (!item.url) { clearTimeout(loadingTimeout); unavailable(); return; }
     atlasDocuments.preview(item, abort.signal).then(data => {
       if (controller !== abort || !modal.open) return;
-      if (!data || !(data.text || data.sections?.length || data.sheets?.length)) return unavailable();
+      if (data?.pdf) return addPDF(previewURL(data.pdf));
+      if (!data || !(data.text || data.blocks?.length || data.slides?.length || data.sheets?.length)) return unavailable();
       contents.replaceChildren();
-      if (data.text) contents.append(make('pre', '', data.text));
-      for (const [index, text] of (data.sections || []).entries()) {
-        contents.append(make('h3', '', tr('slide') + ' ' + (index + 1)), make('pre', '', text));
+      if (data.text) {
+        const paper = make('article', 'document-paper');
+        paper.append(make('pre', '', data.text));
+        contents.append(paper);
+      }
+      if (data.blocks?.length) {
+        const paper = make('article', 'document-paper');
+        for (const block of data.blocks) {
+          if (block.rows) { paper.append(renderTable(block.rows)); continue; }
+          const heading = /^(?:heading\s*([1-3])|title)$/i.exec(block.style);
+          const paragraph = make(heading ? 'h' + (heading[1] || 1) : 'p');
+          paragraph.dir = 'auto';
+          if (['left', 'right', 'center', 'justify'].includes(block.align)) paragraph.style.textAlign = block.align;
+          for (const run of block.runs) {
+            const span = make(run.bold ? 'strong' : 'span', '', run.text);
+            if (run.italic) span.style.fontStyle = 'italic';
+            paragraph.append(span);
+          }
+          if (!paragraph.textContent) paragraph.append(make('br'));
+          paper.append(paragraph);
+          for (const blob of block.images) paper.append(image(previewURL(blob), ''));
+        }
+        contents.append(paper);
+      }
+      for (const [index, slide] of (data.slides || []).entries()) {
+        const page = make('article', 'document-slide');
+        page.setAttribute('aria-label', tr('slide') + ' ' + (index + 1));
+        page.style.aspectRatio = String(slide.ratio);
+        for (const shape of slide.shapes) {
+          const block = make('div', 'slide-shape');
+          if (shape.box?.every(Number.isFinite)) {
+            block.classList.add('placed');
+            ['left', 'top', 'width', 'height'].forEach((property, index) => { block.style[property] = shape.box[index] * 100 + '%'; });
+          }
+          if (shape.image) block.append(image(previewURL(shape.image), ''));
+          for (const line of shape.lines) block.append(make('p', '', line));
+          page.append(block);
+        }
+        contents.append(page);
       }
       for (const [index, sheet] of (data.sheets || []).entries()) {
-        const table = make('table');
-        const body = make('tbody');
-        for (const values of sheet) {
-          const row = make('tr');
-          row.append(...values.map(value => make('td', '', value)));
-          body.append(row);
-        }
-        table.append(body);
-        contents.append(make('h3', '', tr('sheet') + ' ' + (index + 1)), table);
+        const wrapper = make('section', 'document-sheet');
+        wrapper.append(make('h3', '', tr('sheet') + ' ' + (index + 1)), renderTable(sheet, true));
+        contents.append(wrapper);
       }
     }).catch(() => { if (controller === abort && modal.open) unavailable(); }).finally(() => clearTimeout(loadingTimeout));
   }
+
+  function renderTable(rows, spreadsheet = false) {
+    const table = make('table');
+    const body = make('tbody');
+    const columns = Math.max(0, ...rows.map(row => row.length));
+    if (spreadsheet) {
+      const head = make('thead');
+      const row = make('tr');
+      row.append(make('th'));
+      for (let index = 0; index < columns; index++) row.append(make('th', '', String.fromCharCode(65 + index)));
+      head.append(row);
+      table.append(head);
+    }
+    for (const [index, values] of rows.entries()) {
+      const row = make('tr');
+      if (spreadsheet) row.append(make('th', '', String(index + 1)));
+      const length = spreadsheet ? columns : values.length;
+      for (let index = 0; index < length; index++) row.append(make('td', '', values[index]));
+      body.append(row);
+    }
+    table.append(body);
+    return table;
+  }
+
   function iconVisual(item) {
     const visual = make('div', 'icon-visual');
     if (item.svg) {
       visual.append(atlasInspect.svgPreview(item.svg));
     } else if (item.src) visual.append(thumbnail(item));
     else {
-      visual.textContent = item.glyph || '◇';
-      if (item.font) visual.style.fontFamily = item.font;
+      const glyph = make('span', '', item.glyph || '◇');
+      if (item.font) glyph.style.fontFamily = item.font;
+      visual.append(glyph);
     }
     return visual;
   }
@@ -176,8 +277,7 @@ function createAtlasGallery({ shadow, make, tr, preferences, navigate, feedback 
   function render() {
     const position = section.querySelector('.strip')?.scrollLeft || 0;
     const activeAction = shadow.activeElement?.dataset.galleryAction;
-    controller?.abort();
-    controller = undefined;
+    clearDocument();
     const item = items[selected];
     const title = make('h2', '', kind === 'icons' ? tr('icons') : item.label);
     title.id = 'atlas-gallery-title';
@@ -199,6 +299,7 @@ function createAtlasGallery({ shadow, make, tr, preferences, navigate, feedback 
     section.replaceChildren(bar);
     if (kind === 'icons') { section.append(iconGrid()); return; }
     const stage = make('div', 'gallery-stage');
+    stage.dataset.kind = kind;
     if (kind === 'files') renderDocument(item, stage);
     else if (kind === 'videos') {
       if (item.url && !item.node.srcObject) {
@@ -230,6 +331,7 @@ function createAtlasGallery({ shadow, make, tr, preferences, navigate, feedback 
       stage.append(next);
     }
     const strip = make('div', 'strip');
+    strip.dataset.kind = kind;
     for (const [index, option] of items.entries()) {
       const thumb = make('button', 'strip-thumb');
       thumb.type = 'button';
@@ -241,6 +343,7 @@ function createAtlasGallery({ shadow, make, tr, preferences, navigate, feedback 
       strip.append(thumb);
     }
     section.append(stage, strip);
+    pruneFrames();
     strip.scrollLeft = position;
     const active = strip.children[selected];
     if (active) {
@@ -256,9 +359,10 @@ function createAtlasGallery({ shadow, make, tr, preferences, navigate, feedback 
   modal.addEventListener('click', event => { if (event.target === modal) modal.close(); });
   modal.addEventListener('close', () => {
     if (modal.open) return;
-    controller?.abort();
+    clearDocument();
     if (opener?.isConnected) opener.focus({ preventScroll: true });
     section.replaceChildren();
+    pruneFrames();
   });
   modal.addEventListener('keydown', event => {
     if (event.key === 'Escape') event.stopPropagation();
@@ -285,7 +389,7 @@ function createAtlasGallery({ shadow, make, tr, preferences, navigate, feedback 
   notice.setAttribute('role', 'status');
   modal.append(notice);
   let noticeTimer;
-  return { open, copy, save, destroy() { controller?.abort(); clearTimeout(noticeTimer); if (modal.open) modal.close(); }, notify(message) {
+  return { open, copy, save, thumbnail, pruneFrames, destroy() { frameObserver.disconnect(); pendingFrames.clear(); clearDocument(); clearTimeout(noticeTimer); if (modal.open) modal.close(); }, notify(message) {
     if (!modal.open) return false;
     clearTimeout(noticeTimer);
     notice.textContent = message;

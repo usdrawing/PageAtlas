@@ -35,7 +35,8 @@ const atlasDocuments = (() => {
       entries.set(name, [u32(offset + 42), u32(offset + 20), u16(offset + 10)]);
       offset += 46 + nameLength + u16(offset + 30) + u16(offset + 32);
     }
-    return { names: [...entries.keys()], async xml(name) {
+    let expandedSize = 0;
+    async function bytesFor(name) {
       const entry = entries.get(name);
       if (!entry) return null;
       const [local, length, method] = entry;
@@ -44,30 +45,91 @@ const atlasDocuments = (() => {
       const bytes = data.subarray(begin, begin + length);
       if (bytes.length !== length || ![0, 8].includes(method)) throw new Error('Unsupported ZIP entry');
       const raw = method === 0 ? bytes : await limited(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw')), 8 * 1024 * 1024);
-      const xml = new DOMParser().parseFromString(decoder.decode(raw), 'application/xml');
+      expandedSize += raw.byteLength;
+      if (expandedSize > 40 * 1024 * 1024) throw new Error('ZIP expansion limit exceeded');
+      return raw;
+    }
+    return { names: [...entries.keys()], bytes: bytesFor, async xml(name) {
+      const bytes = await bytesFor(name);
+      if (!bytes) return null;
+      const xml = new DOMParser().parseFromString(decoder.decode(bytes), 'application/xml');
       if (xml.querySelector('parsererror')) throw new Error('Invalid XML');
       return xml;
     } };
   }
   const tags = (xml, name) => Array.from(xml?.getElementsByTagNameNS('*', name) || []);
   const strings = (xml, name) => tags(xml, name).map(node => node.textContent).join('');
+  const attr = (element, key) => Array.from(element?.attributes || []).find(a => a.localName === key)?.value || '';
+  async function embeddedImage(zip, rels, base, id) {
+    if (!id) return null;
+    const rel = tags(rels, 'Relationship').find(node => node.getAttribute('Id') === id);
+    const target = rel?.getAttribute('Target');
+    if (!target || rel.getAttribute('TargetMode') === 'External' || /^[a-z]+:/i.test(target)) return null;
+    const name = new URL(target, 'https://archive.invalid/' + base).pathname.slice(1);
+    const ext = name.split('.').pop()?.toLowerCase();
+    const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp' }[ext];
+    if (!mime) return null;
+    const bytes = await zip.bytes(name);
+    return bytes?.length ? new Blob([bytes], { type: mime }) : null;
+  }
   const ext = (label, url) => (label.match(/\.([a-z0-9]+)$/i) || url.match(/\.([a-z0-9]+)(?:[?#]|$)/i))?.[1].toLowerCase();
   function type(item) { return ext(item.label.trim(), item.url || ''); }
   async function preview(item, signal) {
     const kind = type(item);
-    if (!['docx', 'xlsx', 'pptx', 'txt', 'csv', 'md', 'json'].includes(kind)) return null;
+    if (!['pdf', 'docx', 'xlsx', 'pptx', 'txt', 'csv', 'md', 'json'].includes(kind)) return null;
     const response = await fetch(item.url, { signal, credentials: 'same-origin' });
     if (!response.ok || !response.body || Number(response.headers.get('content-length')) > limit) throw new Error('File unavailable');
     const data = await limited(response.body);
+    if (kind === 'pdf') {
+      if (!decoder.decode(data.subarray(0, 1024)).includes('%PDF-')) return null;
+      return { pdf: new Blob([data], { type: 'application/pdf' }) };
+    }
     if (!['docx', 'xlsx', 'pptx'].includes(kind)) return { text: decoder.decode(data.subarray(0, 120000)) };
     const zip = archive(data);
     if (kind === 'docx') {
-      return { text: tags(await zip.xml('word/document.xml'), 'p').slice(0, 1200).map(p => strings(p, 't')).filter(Boolean).join('\n\n') };
+      const xml = await zip.xml('word/document.xml');
+      const rels = await zip.xml('word/_rels/document.xml.rels');
+      const body = tags(xml, 'body')[0];
+      const blocks = [];
+      for (const child of Array.from(body?.children || []).slice(0, 500)) {
+        if (child.localName === 'tbl') {
+          blocks.push({ rows: tags(child, 'tr').map(row => tags(row, 'tc').map(cell => tags(cell, 'p').map(p => strings(p, 't')).join('\n'))) });
+          continue;
+        }
+        if (child.localName !== 'p') continue;
+        const style = attr(tags(child, 'pStyle')[0], 'val');
+        const align = attr(tags(child, 'jc')[0], 'val');
+        const runs = tags(child, 'r').map(run => ({ text: strings(run, 't') || (tags(run, 'br').length ? '\n' : ''),
+          bold: tags(run, 'b').length > 0, italic: tags(run, 'i').length > 0 }));
+        const images = [];
+        for (const blip of tags(child, 'blip').slice(0, 5)) {
+          const image = await embeddedImage(zip, rels, 'word/document.xml', attr(blip, 'embed'));
+          if (image) images.push(image);
+        }
+        blocks.push({ style, align, runs, images });
+      }
+      return { blocks };
     }
     const sortNames = (pattern) => zip.names.filter(name => pattern.test(name)).sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
     if (kind === 'pptx') {
-      return { sections: await Promise.all(sortNames(/^ppt\/slides\/slide\d+\.xml$/).slice(0, 24).map(async name =>
-        tags(await zip.xml(name), 'p').map(p => strings(p, 't')).filter(Boolean).join('\n'))) };
+      const size = tags(await zip.xml('ppt/presentation.xml'), 'sldSz')[0];
+      const width = Number(size?.getAttribute('cx')) || 12192000;
+      const height = Number(size?.getAttribute('cy')) || 6858000;
+      return { slides: await Promise.all(sortNames(/^ppt\/slides\/slide\d+\.xml$/).slice(0, 24).map(async name => {
+        const xml = await zip.xml(name);
+        const rels = await zip.xml(name.replace(/([^/]+)$/, '_rels/$1.rels'));
+        const shapes = [];
+        for (const shape of Array.from(tags(xml, 'spTree')[0]?.children || []).slice(0, 150)) {
+          const transform = tags(shape, 'xfrm')[0];
+          const off = tags(transform, 'off')[0], extent = tags(transform, 'ext')[0];
+          const lines = tags(shape, 'p').map(p => strings(p, 't')).filter(Boolean);
+          const image = await embeddedImage(zip, rels, name, attr(tags(shape, 'blip')[0], 'embed'));
+          if (!lines.length && !image) continue;
+          shapes.push({ lines, image, box: off && extent ? [Number(off.getAttribute('x')) / width, Number(off.getAttribute('y')) / height,
+            Number(extent.getAttribute('cx')) / width, Number(extent.getAttribute('cy')) / height] : null });
+        }
+        return { ratio: width / height, shapes };
+      })) };
     }
     const shared = tags(await zip.xml('xl/sharedStrings.xml'), 'si').map(si => strings(si, 't'));
     const sheets = await Promise.all(sortNames(/^xl\/worksheets\/sheet\d+\.xml$/).slice(0, 12).map(async name =>

@@ -32,7 +32,6 @@
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   let preferences = defaults, host, ui, observer, timer, pulse, filter = 'overview';
   let overviewTitle, mediaFilter = 'images', palette = [], paletteDirty = true, gallery, dockSheet, toastTimer;
-  const hoverTimers = new Set();
   const tr = key => (atlasGalleryLanguages[preferences.lang] || atlasGalleryLanguages.en)[key];
   let query = '', settingsOpen = false, records = [], current;
   let sheetPromise;
@@ -180,8 +179,6 @@
 
   function renderResults() {
     if (!host || settingsOpen) return;
-    for (const timer of hoverTimers) clearTimeout(timer);
-    hoverTimers.clear();
     ui.resultHeader.hidden = true;
     if (filter === 'colors') return renderPalette();
     const words = normalize(query.trim()).split(/\s+/).filter(Boolean);
@@ -205,9 +202,10 @@
       heading.addEventListener('click', () => navigate(overviewTitle));
       ui.resultHeader.replaceChildren(heading);
       ui.resultHeader.hidden = false;
-    } else if (filter === 'icons' && filtered.length) {
+    } else if (filter !== 'overview' && filtered.length) {
+      const kind = filter === 'media' ? mediaFilter : filter;
       const open = make('button', 'gallery-action open-gallery', tr('openGallery'));
-      open.addEventListener('click', () => gallery.open('icons', filtered, filtered[0], open));
+      open.addEventListener('click', () => gallery.open(kind, filtered, filtered[0], open));
       ui.resultHeader.replaceChildren(open);
       ui.resultHeader.hidden = false;
     }
@@ -215,6 +213,7 @@
     filtered.forEach(item => {
       if (!words.length && filter === 'overview' && item === overviewTitle) return;
       const row = make('button', 'item');
+      row.dataset.type = item.type;
       row.type = 'button';
       row.dataset.index = positions.get(item);
       if (item.node === current && item.type === 'outline') row.setAttribute('aria-current', 'location');
@@ -227,6 +226,8 @@
         const visual = atlasInspect.svgPreview(item.svg);
         if (item.type === 'images') visual.classList.add('svg-thumb');
         row.append(visual);
+      } else if (item.type === 'videos') {
+        row.append(gallery.thumbnail(item));
       } else if (item.src || item.poster) {
         const thumb = make('img');
         thumb.src = item.poster || item.src;
@@ -246,20 +247,11 @@
       copy.append(make('strong', '', title));
       if (item.source || item.detail && item.detail !== title) copy.append(make('small', '', item.source || item.detail));
       row.append(copy);
-      if (['images', 'files', 'videos'].includes(item.type)) {
-        const open = () => gallery.open(item.type, filtered, item, row);
-        row.addEventListener('click', open);
-        let hover;
-        row.addEventListener('pointerenter', event => {
-          if (item.type === 'videos' || event.pointerType !== 'mouse') return;
-          hover = setTimeout(() => { hoverTimers.delete(hover); if (row.matches(':hover')) open(); }, 600);
-          hoverTimers.add(hover);
-        });
-        row.addEventListener('pointerleave', () => { clearTimeout(hover); hoverTimers.delete(hover); });
-      } else row.addEventListener('click', () => navigate(item));
+      row.addEventListener('click', () => navigate(item));
       fragment.append(row);
     });
     ui.results.replaceChildren(fragment);
+    gallery.pruneFrames();
     if (focused !== undefined) ui.results.querySelector('[data-index="' + focused + '"]')?.focus({ preventScroll: true });
   }
 
@@ -499,8 +491,6 @@
     frame = undefined;
     document.removeEventListener('loadedmetadata', onMediaLoad, true);
     document.removeEventListener('scroll', onScroll, true);
-    for (const timer of hoverTimers) clearTimeout(timer);
-    hoverTimers.clear();
     clearTimeout(toastTimer);
     if (dockSheet) document.adoptedStyleSheets = document.adoptedStyleSheets.filter(sheet => sheet !== dockSheet);
     dockSheet = undefined;
