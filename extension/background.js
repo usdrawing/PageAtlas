@@ -16,3 +16,14 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   fetch(chrome.runtime.getURL('panel.css')).then(response => response.text()).then(reply, () => reply(null));
   return true;
 });
+
+chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (message.type !== 'download' || sender.id !== chrome.runtime.id || !sender.tab) return;
+  if (typeof message.url !== 'string' || !/^https?:|^data:image\//i.test(message.url)) {
+    reply({ ok: false });
+    return;
+  }
+  chrome.downloads.download({ url: message.url, saveAs: true })
+    .then(() => reply({ ok: true }), () => reply({ ok: false }));
+  return true;
+});

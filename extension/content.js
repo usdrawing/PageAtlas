@@ -1,6 +1,6 @@
 (() => {
   const defaults = { open: false, side: 'right', theme: 'system', lang: navigator.language.split('-')[0] };
-  const kinds = ['all', 'outline', 'messages', 'images', 'files', 'links', 'icons'];
+  const kinds = ['overview', 'media', 'icons', 'colors'];
   const paths = {
     brand: '<path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15m6-12v15"/>',
     search: '<circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/>',
@@ -9,6 +9,7 @@
     images: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="9" r="1"/><path d="m4 17 5-4 3 2 4-5 4 5"/>',
     files: '<path d="M6 3h8l4 4v14H6zm8 0v5h4M9 13h6m-6 4h6"/>',
     links: '<path d="m10 8 3-3a4 4 0 0 1 6 6l-3 3m-2 2-3 3a4 4 0 0 1-6-6l3-3m1 5 6-6"/>',
+    colors: '<circle cx="12" cy="12" r="8"/><path d="M12 4v16m-7-4 14-8m-14 0 14 8"/>',
     icons: '<path d="m12 3 9 9-9 9-9-9z"/>',
     settings: '<path d="M4 6h16M4 12h16M4 18h16M8 4v4m8 2v4m-6 2v4"/>',
     close: '<path d="m6 6 12 12M18 6 6 18"/>'
@@ -28,22 +29,29 @@
   const filePattern = /\.(pdf|docx?|xlsx?|pptx?|csv|zip|txt|rtf|odt|ods|epub|json|md|7z|tar|gz)(?:$|[?#])/i;
   const kb = 'https://github.com/usdrawing/PageAtlas/blob/main/docs/';
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
-  let preferences = defaults, host, ui, observer, timer, pulse, filter = 'all';
+  let preferences = defaults, host, ui, observer, timer, pulse, filter = 'overview';
+  let mediaFilter = 'images', palette = [], paletteDirty = true, gallery, dockSheet, toastTimer;
+  const hoverTimers = new Set();
+  const tr = key => (atlasGalleryLanguages[preferences.lang] || atlasGalleryLanguages.en)[key];
   let query = '', settingsOpen = false, records = [], current;
   let sheetPromise;
   const t = i => (atlasLanguages[preferences.lang] || atlasLanguages.en)[i];
 
   function scan() {
+    paletteDirty = true;
+    if (filter === 'colors') { renderResults(); return; }
     const root = (gmail || chatgpt) ? document.querySelector('main,[role="main"]') || document.body : document.body;
-    const selector = 'h1,h2,h3,h4,h5,h6,[role=heading],img,svg[aria-label],[role=img],a[href],[download],[download_url],p,li,blockquote,pre,td,[role=article],[data-message-author-role],[data-message-id],[data-testid="message-container"],.a3s';
+    const selector = 'h1,h2,h3,h4,h5,h6,[role=heading],img,svg,[class*="material-icons"],[class*="material-symbols"],[role=img],span,a[href],[download],[download_url],p,li,blockquote,pre,td,[role=article],[data-message-author-role],[data-message-id],[data-testid="message-container"],.a3s';
     const items = [];
     const seen = new Set();
     for (const node of root.querySelectorAll(selector)) {
-      if (node.closest('nav,script,style,[hidden],[aria-hidden=true],[inert]') || !node.getClientRects().length) continue;
+      if (node.matches('span:not([class*="material-"]):not([role=img])') && (node.childElementCount || !node.textContent.trim() || node.textContent.length > 300 || !node.textContent.match(atlasInspect.glyphs))) continue;
+      if (node.closest('script,style,[hidden],[inert]') || !node.getClientRects().length) continue;
       const style = getComputedStyle(node);
       if (style.visibility !== 'visible' || style.contentVisibility === 'hidden') continue;
+      if (node.matches('span') && node.childElementCount) continue;
       let label = clean(node.getAttribute('aria-label') || node.getAttribute('title'));
-      let detail = '', type, src, level;
+      let detail = '', type, src, level, url, source, svg, glyph, font;
       if (node.matches('h1,h2,h3,h4,h5,h6,[role=heading]')) {
         type = 'outline';
         level = Number(node.getAttribute('aria-level') || node.tagName.slice(1)) || 1;
@@ -51,20 +59,38 @@
       } else if (node instanceof HTMLImageElement) {
         const rect = node.getBoundingClientRect();
         if (rect.width < 12 || rect.height < 12) continue;
-        type = rect.width <= 40 && rect.height <= 40 ? 'icons' : 'images';
-        src = node.currentSrc || node.src;
+        const favicon = rect.width <= 32 && rect.height <= 32;
+        type = favicon ? 'icons' : 'images';
+        source = favicon ? tr('imageSource') : '';
+        src = atlasInspect.safeURL(node.currentSrc || node.src, true);
+        if (!src) continue;
         label ||= clean(node.alt);
         if (!label) {
           try { label = decodeURIComponent(new URL(src).pathname.split('/').pop()).slice(0, 80); } catch {}
         }
         label ||= t(type === 'icons' ? 7 : 4);
-      } else if (node.matches('svg,[role=img]')) {
+      } else if (node.matches('svg,[role=img],span,[class*="material-icons"],[class*="material-symbols"]')) {
+        const iconInfo = atlasInspect.identify(node);
+        if (iconInfo) {
+          ({ source, svg, glyph, font } = iconInfo);
+          label ||= iconInfo.label || source;
+          if (!svg && !glyph) continue;
+        } else {
+          for (const [glyph] of node.innerText?.matchAll(atlasInspect.glyphs) || []) {
+            const key = 'unicode:' + glyph;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            items.push({ node, type: 'icons', label: glyph, glyph, source: 'Unicode', match: normalize(glyph + ' Unicode') });
+          }
+          continue;
+        }
         type = 'icons';
-        label ||= clean(node.querySelector('title')?.textContent);
       } else if (node.matches('[download],[download_url],a[href]')) {
-        const url = node.getAttribute('href') || '';
+        const href = node.getAttribute('href') || '';
+        url = atlasInspect.safeURL(href);
         const filename = node.getAttribute('download') || '';
         const attachment = node.getAttribute('download_url');
+        if (attachment) url = atlasInspect.safeURL(attachment.match(/(?:https?:|blob:).+$/i)?.[0]) || url;
         label ||= clean(node.innerText) || filename;
         const isDrive = /https:\/\/(?:drive|docs)\.google\.com\//i.test(url);
         const isFile = node.hasAttribute('download') || attachment || filePattern.test(url) || filePattern.test(label) || isDrive;
@@ -92,15 +118,21 @@
           detail = clean(sender?.textContent || sender?.getAttribute('email')) || detail;
         }
         items.push({ node, type, label, detail, match: normalize(body) });
+        if (!node.querySelector('span,p,li')) for (const [glyph] of body.matchAll(atlasInspect.glyphs)) {
+          const key = 'unicode:' + glyph;
+          if (!seen.has(key)) items.push({ node, type: 'icons', label: glyph, glyph, source: 'Unicode', match: normalize(glyph + ' Unicode') });
+          seen.add(key);
+        }
         continue;
       }
       if (!label) continue;
       label = label.slice(0, 250);
-      if (type === 'icons') {
-        if (seen.has(label)) continue;
-        seen.add(label);
+      if (['icons', 'images', 'files'].includes(type)) {
+        const key = type + ':' + (svg || glyph || src || url || label);
+        if (seen.has(key)) continue;
+        seen.add(key);
       }
-      items.push({ node, type, label, src, level, match: normalize(label) });
+      items.push({ node, type, label, src, level, url, source, svg, glyph, font, match: normalize(label + ' ' + (source || '')) });
     }
     records = items;
     renderResults();
@@ -108,7 +140,7 @@
   }
 
   function updateCurrent() {
-    if (!host || settingsOpen) return;
+    if (!host || settingsOpen || filter !== 'overview') return;
     const headings = records.filter(item => item.type === 'outline');
     const threshold = Math.min(140, innerHeight / 4);
     const visible = headings.filter(item => item.node.getBoundingClientRect().bottom > 0 &&
@@ -134,10 +166,14 @@
 
   function renderResults() {
     if (!host || settingsOpen) return;
+    for (const timer of hoverTimers) clearTimeout(timer);
+    hoverTimers.clear();
+    if (filter === 'colors') return renderPalette();
     const words = normalize(query.trim()).split(/\s+/).filter(Boolean);
     const filtered = records.filter(item => {
-      if (filter !== 'all' && item.type !== filter && !(filter === 'messages' && item.type === 'text' && (gmail || chatgpt))) return false;
-      if (!words.length) return item.type !== 'text';
+      if (filter === 'overview') {
+        if (!['outline', 'messages'].includes(item.type) && !(words.length && ['text', 'links'].includes(item.type))) return false;
+      } else if (item.type !== (filter === 'media' ? mediaFilter : filter)) return false;
       return words.every(word => item.match.includes(word));
     });
     ui.status.textContent = new Intl.NumberFormat(preferences.lang in atlasLanguages ? preferences.lang : 'en').format(filtered.length) + ' · ' + t(25);
@@ -155,7 +191,14 @@
       row.dataset.index = positions.get(item);
       if (item.node === current && item.type === 'outline') row.setAttribute('aria-current', 'location');
       if (item.level) row.style.paddingInlineStart = (7 + Math.min(4, item.level - 1) * 8) + 'px';
-      if (item.src && /^(?:https?:|data:image\/|blob:)/i.test(item.src)) {
+      if (item.glyph) {
+        const glyph = make('span', 'row-glyph', item.glyph);
+        if (item.font) glyph.style.fontFamily = item.font;
+        row.append(glyph);
+      } else if (item.svg) {
+        const svg = new DOMParser().parseFromString(item.svg, 'image/svg+xml').documentElement;
+        row.append(document.importNode(svg, true));
+      } else if (item.src && /^(?:https?:|data:image\/|blob:)/i.test(item.src)) {
         const thumb = make('img');
         thumb.src = item.src;
         thumb.loading = 'lazy';
@@ -172,13 +215,60 @@
         if (index > 50) title = '…' + full.slice(index - 40, index + 105);
       }
       copy.append(make('strong', '', title));
-      if (item.detail && item.detail !== title) copy.append(make('small', '', item.detail));
+      if (item.source || item.detail && item.detail !== title) copy.append(make('small', '', item.source || item.detail));
       row.append(copy);
-      row.addEventListener('click', () => navigate(item));
+      if (['images', 'files', 'icons'].includes(item.type)) {
+        const open = () => gallery.open(item.type, filtered, item, row);
+        row.addEventListener('click', open);
+        let hover;
+        row.addEventListener('pointerenter', event => {
+          if (event.pointerType !== 'mouse') return;
+          hover = setTimeout(() => { hoverTimers.delete(hover); if (row.matches(':hover')) open(); }, 600);
+          hoverTimers.add(hover);
+        });
+        row.addEventListener('pointerleave', () => { clearTimeout(hover); hoverTimers.delete(hover); });
+      } else row.addEventListener('click', () => navigate(item));
       fragment.append(row);
     });
     ui.results.replaceChildren(fragment);
     if (focused !== undefined) ui.results.querySelector('[data-index="' + focused + '"]')?.focus({ preventScroll: true });
+  }
+
+  function announce(message) {
+    if (!host || gallery?.notify(message)) return;
+    clearTimeout(toastTimer);
+    ui.toast.textContent = message;
+    ui.toast.hidden = false;
+    toastTimer = setTimeout(() => { if (host) ui.toast.hidden = true; }, 2000);
+  }
+
+  function renderPalette() {
+    if (paletteDirty) { palette = atlasInspect.colors(document.body); paletteDirty = false; }
+    const shown = palette.filter(color => color.includes(query.trim().toUpperCase()));
+    ui.status.textContent = shown.length + ' · ' + tr('colors');
+    if (!shown.length) {
+      ui.results.replaceChildren(make('p', 'empty', t(21)));
+      return;
+    }
+    const toolbar = make('div', 'palette-tools');
+    const css = make('button', 'gallery-action', tr('copyCode'));
+    css.addEventListener('click', () => gallery.copy(':root {\n' + shown.map((color, index) => '  --color-' + (index + 1) + ': ' + color + ';').join('\n') + '\n}'));
+    const svg = make('button', 'gallery-action', tr('copySvg'));
+    svg.addEventListener('click', () => gallery.copy(atlasInspect.paletteSVG(shown), true));
+    const save = make('button', 'gallery-action', tr('saveSvg'));
+    save.addEventListener('click', () => gallery.save(atlasInspect.paletteSVG(shown), 'pageatlas-palette.svg'));
+    toolbar.append(css, svg, save);
+    const swatches = make('div', 'swatches');
+    for (const color of shown) {
+      const button = make('button', 'swatch');
+      button.title = tr('copyCode') + ' ' + color;
+      const preview = make('span', 'swatch-color');
+      preview.style.backgroundColor = color;
+      button.append(preview, make('span', '', color));
+      button.addEventListener('click', () => gallery.copy(color));
+      swatches.append(button);
+    }
+    ui.results.replaceChildren(toolbar, swatches);
   }
 
   function setPreference(key, value) {
@@ -202,16 +292,30 @@
     ui.close.title = t(10);
     ui.privacy.textContent = t(19);
     ui.terms.textContent = t(20);
-    ui.filters.replaceChildren(...kinds.map((kind, index) => {
-      const button = make('button', 'filter', t(index + 1));
+    ui.filters.replaceChildren(...kinds.map(kind => {
+      const button = make('button', 'filter', tr(kind));
       button.type = 'button';
       button.dataset.kind = kind;
       button.setAttribute('aria-pressed', String(filter === kind));
       button.addEventListener('click', () => {
         filter = kind;
-        for (const control of ui.filters.children) control.setAttribute('aria-pressed', String(control === button));
         ui.results.scrollTop = 0;
-        renderResults();
+        applyPreferences();
+        ui.filters.querySelector('[data-kind="' + kind + '"]')?.focus();
+        if (kind !== 'colors') scan();
+      });
+      return button;
+    }));
+    ui.media.hidden = filter !== 'media';
+    ui.media.replaceChildren(...['images', 'files'].map((kind, index) => {
+      const button = make('button', 'filter', t(index + 4));
+      button.dataset.media = kind;
+      button.setAttribute('aria-pressed', String(kind === mediaFilter));
+      button.addEventListener('click', () => {
+        mediaFilter = kind;
+        ui.results.scrollTop = 0;
+        applyPreferences();
+        ui.media.querySelector('[data-media="' + kind + '"]')?.focus();
       });
       return button;
     }));
@@ -288,6 +392,10 @@
     search.type = 'search';
     search.value = query;
     const filters = make('div', 'filters');
+    const media = make('div', 'media-filters');
+    const toast = make('div', 'toast');
+    toast.setAttribute('role', 'status');
+    toast.hidden = true;
     const status = make('div', 'status');
     status.setAttribute('aria-live', 'polite');
     const results = make('div', 'results');
@@ -324,10 +432,14 @@
       }
     });
     searchLabel.append(search);
-    controls.append(searchLabel, filters);
+    controls.append(searchLabel, filters, media);
     shell.append(header, controls, status, results, settings, footer);
-    shadow.append(shell);
-    ui = { shell, subtitle, gear, close, controls, search, filters, status, results, settings, privacy, terms };
+    shadow.append(shell, toast);
+    gallery = createAtlasGallery({ shadow, make, tr, preferences: () => preferences, navigate, feedback: announce });
+    ui = { shell, subtitle, gear, close, controls, search, filters, media, status, results, settings, privacy, terms, toast };
+    dockSheet = new CSSStyleSheet();
+    dockSheet.replaceSync('html:has(> page-atlas-panel[data-side="right"]) { margin-right: min(288px, 50vw) !important; max-width: calc(100% - min(288px, 50vw)) !important; } html:has(> page-atlas-panel[data-side="left"]) { margin-left: min(288px, 50vw) !important; max-width: calc(100% - min(288px, 50vw)) !important; }');
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, dockSheet];
     document.documentElement.append(host);
     toggleSettings(false);
     scan();
@@ -351,10 +463,21 @@
     cancelAnimationFrame(frame);
     frame = undefined;
     document.removeEventListener('scroll', onScroll, true);
+    for (const timer of hoverTimers) clearTimeout(timer);
+    hoverTimers.clear();
+    clearTimeout(toastTimer);
+    if (dockSheet) document.adoptedStyleSheets = document.adoptedStyleSheets.filter(sheet => sheet !== dockSheet);
+    dockSheet = undefined;
+    gallery?.destroy();
+    gallery = undefined;
     host?.remove();
     host = undefined;
     records = [];
     current = undefined;
+    filter = 'overview';
+    mediaFilter = 'images';
+    palette = [];
+    paletteDirty = true;
   }
 
   function syncPanel() {
