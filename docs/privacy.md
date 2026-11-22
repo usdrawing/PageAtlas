@@ -1,13 +1,15 @@
 # PageAtlas privacy policy
 
-Effective November 17, 2026. This policy covers PageAtlas 0.2.2.
+This policy covers PageAtlas 0.3.0, including Studio and the optional Figma companion.
 
-PageAtlas reads the HTML content available in your browser tab while the panel is open on supported pages. It uses headings, visible text, links, image references, file labels and message text to create a local index and navigate to results. Searches and indexed content are held in browser memory. The extension stores the panel’s open state, position, theme and language in Chrome’s local extension storage.
+PageAtlas reads supported pages to create a local navigation index. When you request a capture it saves screenshots, text, image references, colors, typography and layout layers. Captures may include private content visible in your browser session. The debugger permission is used temporarily for screenshots and viewport resizing, and is detached afterwards.
 
-When you open a media or document preview, Chrome may fetch the original file from its host. Document previews are processed locally. Downloads use Chrome’s download manager and export actions write the selected data to your clipboard or a local file.
+Panel indexes and searches remain in memory. Panel preferences are stored in Chrome local extension storage. Studio projects, screenshots, layers, presentations and prototype flows are stored in IndexedDB in this browser profile. PageAtlas does not synchronize them. You can delete individual projects in Studio. Uninstalling the extension or clearing its storage deletes local projects. Downloaded or copied files remain at their destinations.
 
-PageAtlas has no account, analytics, tracking, advertising or data collection server. It does not sell or transmit indexed page content or search queries. Image and video thumbnails may use the original media URL, and the linked policy pages open on GitHub. Those services handle requests under their own policies.
+PageAtlas has no account, analytics, advertising, tracking service or project server. It does not sell project data. Capturing another URL loads that website in a browser tab. Media previews and imports request files from their original hosts. Downloads use Chrome's download manager or local browser files. Policy links open on GitHub. Those hosts process requests under their own policies.
 
-PageAtlas requests website access so the panel can stay open and update as you browse. Closing the panel discards its index. Removing the extension deletes its stored preferences.
+Copy AI Prompt copies source content, source URL, image URLs and a presentation specification to your clipboard. PageAtlas does not send this to an AI service. If you paste it into another tool, that tool's terms apply. Export and copy actions put the selected content in local files or on your clipboard.
 
-For privacy questions, [contact the project maintainer](https://github.com/usdrawing/PageAtlas/issues). Avoid posting private page content in a public issue.
+The optional Figma companion exports a selected frame locally, can hand its image to PageAtlas on a Figma tab, and imports SVG files you choose. It does not request network access. Figma operates under its own policies.
+
+For questions, [contact the maintainer](https://github.com/usdrawing/PageAtlas/issues). Public issues are visible to others; share only information you intend to make public.

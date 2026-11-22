@@ -109,3 +109,4 @@ footer{display:flex;justify-content:space-between;border-top:1px solid var(--lin
 .slide-shape p{margin:0 0 .2em;overflow-wrap:anywhere}.document-sheet{width:max-content;min-width:100%}.document-sheet h3{margin:0;padding:8px 12px;background:#dceee2}
 .document-preview :is(td,th){border:1px solid #d5ddd7}.document-preview th{padding:4px 10px;background:#edf2ee;color:#3d5446;font-weight:600}
 .document-preview td{min-width:44px;white-space:pre-wrap}.document-preview .document-open{color:#176248}
+.studio-tools{display:flex;gap:3px;margin:0 0 9px;padding-bottom:8px;border-bottom:1px solid var(--line)}.studio-tools .filter{flex:1;padding:5px 2px;font-size:11px}.studio-tools button:last-child{background:var(--tint);color:var(--accent);font-weight:600}

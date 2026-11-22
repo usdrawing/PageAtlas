@@ -408,6 +408,30 @@
     close.addEventListener('click', () => setOpen(false));
     header.append(mark, wordmark, gear, close);
     const controls = make('div', 'controls');
+    const studioTools = make('div', 'studio-tools');
+    const studioLabels = {
+      en: ['Capture', 'Section', 'Responsive', 'Studio', 'Point to an element and click. Esc to cancel.'],
+      he: ['צילום', 'סקשן', 'גדלים', 'סטודיו', 'בחרו אלמנט בלחיצה. Esc לביטול.'],
+      es: ['Capturar', 'Sección', 'Adaptable', 'Estudio', 'Selecciona un elemento. Esc para cancelar.'],
+      fr: ['Capturer', 'Section', 'Adaptatif', 'Studio', 'Cliquez sur un élément. Échap pour annuler.'],
+      de: ['Aufnehmen', 'Bereich', 'Größen', 'Studio', 'Element anklicken. Esc zum Abbrechen.'],
+      pt: ['Capturar', 'Seção', 'Tamanhos', 'Estúdio', 'Selecione um elemento. Esc para cancelar.']
+    };
+    for (const [index, kind] of ['page', 'selection', 'responsive', 'studio'].entries()) {
+      const control = make('button', 'filter', (studioLabels[preferences.lang] || studioLabels.en)[index]);
+      control.addEventListener('click', async () => {
+        control.disabled = true;
+        try {
+          const message = kind === 'studio' ? { type: 'open-studio' } : kind === 'selection' ?
+            { type: 'choose-element', help: (studioLabels[preferences.lang] || studioLabels.en)[4] } :
+            { type: 'capture', mode: 'page', responsive: kind === 'responsive' };
+          const result = await chrome.runtime.sendMessage(message);
+          if (result?.error) announce(result.error);
+        } catch (error) { announce(error.message); }
+        finally { control.disabled = false; }
+      });
+      studioTools.append(control);
+    }
     const searchLabel = make('label', 'search');
     searchLabel.innerHTML = icon('search');
     const search = make('input');
@@ -456,7 +480,7 @@
       }
     });
     searchLabel.append(search);
-    controls.append(searchLabel, filters, media);
+    controls.append(studioTools, searchLabel, filters, media);
     shell.append(header, controls, status, resultHeader, results, settings, footer);
     shadow.append(shell, toast);
     gallery = createAtlasGallery({ shadow, make, tr, preferences: () => preferences, navigate, feedback: announce });
@@ -529,6 +553,8 @@
     if (changes.lang || changes.theme || changes.side) applyPreferences();
   });
   chrome.runtime.onMessage.addListener((message, sender, reply) => {
+    if (message.type === 'capture-prepare') { unmount(); reply({ ok: true }); return; }
+    if (message.type === 'capture-restore') { syncPanel(); reply({ ok: true }); return; }
     if (message.type !== 'toggle') return;
     ready.then(() => {
       setOpen(!preferences.open);

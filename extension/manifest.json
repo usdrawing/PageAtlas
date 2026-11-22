@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "PageAtlas",
-  "version": "0.2.2",
-  "description": "Search and navigate headings, messages, images and files on the current page.",
+  "version": "0.3.0",
+  "description": "Capture pages and create local editable designs, mockups, presentations and prototypes.",
   "permissions": [
     "storage",
-    "downloads"
+    "downloads",
+    "debugger"
   ],
   "background": {
     "service_worker": "background.js"
@@ -34,7 +35,8 @@
         "inspect.js",
         "documents.js",
         "gallery.js",
-        "content.js"
+        "content.js",
+        "capture-ui.js"
       ],
       "run_at": "document_idle"
     }
@@ -45,5 +47,9 @@
         "default": "Alt+Shift+Y"
       }
     }
-  }
+  },
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ]
 }

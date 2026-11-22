@@ -27,3 +27,5 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     .then(() => reply({ ok: true }), () => reply({ ok: false }));
   return true;
 });
+
+importScripts('capture-background.js');

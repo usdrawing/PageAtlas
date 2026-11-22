@@ -1,16 +1,35 @@
 # PageAtlas
 
-A free in-page Chrome sidebar for searching headings, messages, images, files, links, icons and text on the current page. Gmail and ChatGPT have dedicated content selectors. PageAtlas uses the content already loaded in the open thread or conversation.
+A free, local Chrome extension for navigating webpages and turning captures into design assets. Studio preserves the PageAtlas identity, six languages and light/dark modes.
 
-## Load unpacked
+## Install the preview
 
-1. Open chrome://extensions in Chrome.
-2. Enable Developer mode.
-3. Choose Load unpacked and select this repository's `extension` folder.
-4. Reload any tabs that were already open. Click PageAtlas in the toolbar or press Alt+Shift+Y.
+1. Open chrome://extensions and enable Developer mode.
+2. Choose Load unpacked and select the extension directory.
+3. Reload webpage tabs. Click PageAtlas in the toolbar or press Alt+Shift+Y.
+4. Use Capture, Section, Responsive or Studio in the panel.
 
-The panel stays open on supported pages until you close it. Its settings include a physical left or right position, light/dark/system themes, and six languages. Overview starts with headings and messages. Media contains image, video and file galleries. Open them with the Open gallery button; clicking an item in the panel jumps to its position. Video playback depends on the source, codec and access controls. Icons includes detected Material, Lucide, SVG and Unicode assets. Colors lists computed RGB colors and exports CSS variables or SVG. The panel reserves space beside normal page layout. Elements pinned to the viewport by the site can still overlap the dock.
+Chrome requires the debugger permission for full-page and responsive captures. A debugging indicator can appear during capture. PageAtlas detaches afterwards. Protected browser pages cannot be captured.
 
-PDF preview uses the browser’s viewer. For accessible DOCX, XLSX and PPTX files, PageAtlas builds an approximate visual preview locally with document pages, spreadsheet grids or slide layouts. Advanced Office layouts and legacy binary formats can require opening the original. Some files must be opened or downloaded at their original location. Chrome's internal pages and some embedded content are inaccessible to extensions.
+## Studio
+
+- Capture the current page, an element or section, or desktop/tablet/mobile widths of 1440/768/390 pixels. Capture another URL from Studio. Responsive layouts are restored afterwards.
+- Keep a pixel screenshot and editable text, shape, image and SVG layers. Select layers in Editable design and export SVG for Figma or XD. Complex media uses raster fallbacks. Browser CSS and font rendering may differ after import.
+- Create mockups with phone, tablet, laptop, desktop, browser and unframed screen templates. Choose a device arrangement, background, text, crop and output dimensions.
+- Use social post, story and App Store sizes. Export several sizes and formats in one ZIP.
+- Generate a basic presentation locally from text, or copy an AI prompt and paste the resulting JSON. Edit titles, body, bullets, images and notes. Export SVG or images, print PDF or download PPTX with native editable text.
+- Extract images, sanitized SVGs, colors, typography and button styles. Export assets, token JSON and a design-system SVG.
+- Connect screens with clickable regions. Preview the flow and export a standalone interactive HTML file.
+- Upload or paste screenshots. Import and export .pageatlas project backups. Projects live in IndexedDB in this browser profile. Uninstalling PageAtlas or clearing its storage removes local projects.
+
+## Figma
+
+The optional [Figma companion](figma-plugin/README.md) exports a selected frame and imports SVG. It requires one-time setup as a Figma development plugin. Direct local handoff and project-file import are included. Native Figma integration and Adobe XD import still need live verification in those applications.
+
+## Preview limits
+
+Captures include content already rendered in the page. Editable browser layers are an approximation, capped at 10,000 layers. Screenshots are limited to 65 million pixels, 16,384 pixels wide and 30,000 pixels tall. Use section capture for larger pages. Imported screenshots remain raster images. Device frames are vector mockups.
+
+PageAtlas has no hosted AI model, account or project server. Capturing a URL loads that website. Remote media imports request the original host. Copying an AI prompt lets you review its content before sharing it with an external tool.
 
 [Privacy](docs/privacy.md) · [Terms](docs/terms.md)

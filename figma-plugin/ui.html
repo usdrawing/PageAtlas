@@ -1,0 +1,20 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><style>body{font:13px/1.5 system-ui;padding:15px;color:var(--figma-color-text,#202d25);background:var(--figma-color-bg,#fff)}h1{font-size:18px}button{display:block;width:100%;padding:10px;border:0;border-radius:7px;background:#176248;color:white;margin:12px 0;cursor:pointer}p{color:var(--figma-color-text-secondary,#53665a)}input{max-width:100%}</style><h1>PageAtlas Companion</h1><p>Select a frame and export it. Import the resulting project in PageAtlas Studio to create a mockup.</p><button id="export">Export selected frame</button><button id="send" disabled>Send frame to PageAtlas</button><label>Import editable SVG from PageAtlas<input id="svg" type="file" accept=".svg"></label><p id="status" role="status"></p><script>
+const status=document.getElementById('status');let exportedFrame;
+document.getElementById('send').onclick=()=>{if(exportedFrame){top.postMessage({type:'PAGEATLAS_FRAME',frame:exportedFrame},'*');status.textContent='Sent. If Studio does not open, import the downloaded project.'}};
+document.getElementById('export').onclick=()=>{status.textContent='Exporting…';parent.postMessage({pluginMessage:{type:'export'}},'*')};
+document.getElementById('svg').onchange=async event=>{const file=event.target.files[0];if(file)parent.postMessage({pluginMessage:{type:'import',svg:await file.text()}},'*')};
+onmessage=event=>{
+  const message=event.data.pluginMessage;
+  if(!message)return;
+  if(message.type==='error'){status.textContent=message.text;return}
+  if(message.type==='done'){status.textContent='Imported into Figma.';return}
+  if(message.type!=='frame')return;
+  let binary='';for(let index=0;index<message.bytes.length;index+=8192)binary+=String.fromCharCode(...message.bytes.slice(index,index+8192));
+  const screenshot='data:image/png;base64,'+btoa(binary);
+  exportedFrame={title:message.name,width:message.width,height:message.height,screenshot};document.getElementById('send').disabled=false;
+  const project={schema:1,name:message.name,createdAt:Date.now(),snapshots:[{id:'figma-'+Date.now(),title:message.name,width:message.width,height:message.height,screenshot,layers:[],colors:[],typography:[],components:[],images:[],text:'',headings:[]}],flows:[]};
+  const url=URL.createObjectURL(new Blob([JSON.stringify(project)],{type:'application/json'}));
+  const link=document.createElement('a');link.href=url;link.download='figma-frame.pageatlas';link.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
+  status.textContent='Open the downloaded file in PageAtlas Studio.';
+};
+</script></html>
