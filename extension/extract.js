@@ -65,7 +65,28 @@ function atlasExtract(selection) {
         ...rect, fill: style.backgroundColor, color: style.color, radius: parseFloat(style.borderRadius) || 0, fontFamily: family, fontSize: parseFloat(style.fontSize) });
     }
   }
-  return { width, height, origin, title: document.title || clean(root.matches('h1') ? root.innerText : root.querySelector('h1')?.innerText) || location.hostname, url: location.href,
+  const meta = selector => clean(document.querySelector(selector)?.getAttribute('content'));
+  let structured = {};
+  for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+    if (script.textContent.length > 150000) continue;
+    try {
+      const value = JSON.parse(script.textContent);
+      const entries = Array.isArray(value) ? value : value['@graph'] || [value];
+      const organization = entries.find(item => /Organization|WebSite|SoftwareApplication|Product/i.test(String(item['@type'])));
+      if (organization) structured = { ...structured, ...organization };
+    } catch {}
+  }
+  const logoValue = typeof structured.logo === 'string' ? structured.logo : structured.logo?.url || structured.logo?.contentUrl;
+  const logoNode = document.querySelector('header img[alt*="logo" i],img[class*="logo" i],a[aria-label*="home" i] img');
+  let logo = logoValue || logoNode?.currentSrc || document.querySelector('link[rel~="icon"]')?.href || '';
+  try { logo = new URL(logo, location.href).href; if (!/^https?:/.test(logo)) logo = ''; } catch { logo = ''; }
+  const bodyStyle = getComputedStyle(document.body);
+  const brand = { title: meta('meta[property="og:title"]') || structured.name || document.title,
+    description: meta('meta[name="description"]') || meta('meta[property="og:description"]') || structured.description || '',
+    logo, themeColor: meta('meta[name="theme-color"]'), color: bodyStyle.color,
+    background: bodyStyle.backgroundColor === 'rgba(0, 0, 0, 0)' ? '#eef3eb' : bodyStyle.backgroundColor,
+    fontFamily: bodyStyle.fontFamily, direction: bodyStyle.direction };
+  return { width, height, origin, brand, title: document.title || clean(root.matches('h1') ? root.innerText : root.querySelector('h1')?.innerText) || location.hostname, url: location.href,
     text: clean(root.innerText).slice(0, 60000), layers, images, colors: [...colors].slice(0, 200),
     typography: [...fonts.values()].slice(0, 150), components,
     headings: [...root.querySelectorAll('h1,h2,h3')].filter(visible).map(node => clean(node.innerText)).slice(0, 100),

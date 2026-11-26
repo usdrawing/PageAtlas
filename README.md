@@ -33,3 +33,11 @@ Captures include content already rendered in the page. Editable browser layers a
 PageAtlas has no hosted AI model, account or project server. Capturing a URL loads that website. Remote media imports request the original host. Copying an AI prompt lets you review its content before sharing it with an external tool.
 
 [Privacy](docs/privacy.md) · [Terms](docs/terms.md)
+
+## Capture and responsive studio in 0.4.0
+
+Capture, Section and Responsive now open a setup screen before doing any work. Choose viewport sizes and device frames, transparent or colored output, page height and camera details, then confirm. Section capture returns to the source page for selection; Esc cancels it. The latest rendered capture is automatically copied to the clipboard when Chrome allows the write. A manual Copy image action remains available. Thumbnails can be downloaded, removed, or opened in the editor, and additional captures can be added to the project.
+
+Each screen keeps its own device assignment. Select one screen, all screens or any subset. Eight composition layouts adapt to the selected screens and text mode. Text, colors, output dimensions, crop and camera options update the main preview while you edit. PNG, WebP and SVG support transparent composition backgrounds. A webpage's own painted background remains part of its screenshot.
+
+Site title, description, theme color, font family and logo candidates come from available page metadata, JSON-LD and page elements. Logo and text can be toggled. Color suggestions and automatic text contrast help reuse the site's branding. Web fonts that are unavailable in Studio use the browser's font fallback.

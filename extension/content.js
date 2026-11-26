@@ -423,8 +423,8 @@
         control.disabled = true;
         try {
           const message = kind === 'studio' ? { type: 'open-studio' } : kind === 'selection' ?
-            { type: 'choose-element', help: (studioLabels[preferences.lang] || studioLabels.en)[4] } :
-            { type: 'capture', mode: 'page', responsive: kind === 'responsive' };
+            { type: 'open-capture', mode: 'selection' } :
+            { type: 'open-capture', mode: kind };
           const result = await chrome.runtime.sendMessage(message);
           if (result?.error) announce(result.error);
         } catch (error) { announce(error.message); }

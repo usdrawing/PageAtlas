@@ -1,6 +1,6 @@
 # PageAtlas privacy policy
 
-This policy covers PageAtlas 0.3.0, including Studio and the optional Figma companion.
+This policy covers PageAtlas 0.4.0, including Studio and the optional Figma companion.
 
 PageAtlas reads supported pages to create a local navigation index. When you request a capture it saves screenshots, text, image references, colors, typography and layout layers. Captures may include private content visible in your browser session. The debugger permission is used temporarily for screenshots and viewport resizing, and is detached afterwards.
 
@@ -13,3 +13,5 @@ Copy AI Prompt copies source content, source URL, image URLs and a presentation 
 The optional Figma companion exports a selected frame locally, can hand its image to PageAtlas on a Figma tab, and imports SVG files you choose. It does not request network access. Figma operates under its own policies.
 
 For questions, [contact the maintainer](https://github.com/usdrawing/PageAtlas/issues). Public issues are visible to others; share only information you intend to make public.
+
+After an approved capture, PageAtlas attempts to copy the latest rendered image to your clipboard. The clipboardWrite permission enables this action; a success status is shown only when the write completes. You can also copy an image manually. Capture settings, device assignments, metadata-derived branding and preview images are saved with the local project. Logo imports request the original logo host. PageAtlas does not remove the source website’s own background when exporting a transparent composition.

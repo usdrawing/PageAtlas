@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "PageAtlas",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Capture pages and create local editable designs, mockups, presentations and prototypes.",
   "permissions": [
     "storage",
     "downloads",
-    "debugger"
+    "debugger",
+    "clipboardWrite"
   ],
   "background": {
     "service_worker": "background.js"

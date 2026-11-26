@@ -3,7 +3,7 @@
   const main = $('#main'), inspector = $('#inspector');
   const state = { project: null, screen: 0, tool: 'capture', slide: 0, layer: -1, lang: 'en', svg: null };
   const tr = key => studioWords[state.lang]?.[key] || studioWords.en[key] || key;
-  const tools = ['capture', 'design', 'mockup', 'presentation', 'social', 'prototype', 'assets'];
+  const tools = ['capture', 'section', 'responsive', 'design', 'mockup', 'presentation', 'social', 'prototype', 'assets'];
   const presets = { desktop: [1920, 1080], tablet: [1536, 2048], mobile: [1080, 1920], post: [1080, 1080], story: [1080, 1920], appstore: [1290, 2796] };
   let renderToken = 0, noticeTimer, pendingSave = Promise.resolve();
   const make = (tag, className, text) => {
@@ -67,6 +67,9 @@
     }));
   }
   async function selectProject(project) {
+    clearTimeout(liveSaveTimer);
+    liveSaveTimer = undefined;
+    if (state.project && project && state.project.id !== project.id) await save();
     await pendingSave.catch(() => {});
     state.project = project;
     state.screen = 0;
@@ -79,20 +82,44 @@
   }
   function config() {
     const key = state.tool === 'social' ? 'social' : 'composition';
-    state.project[key] ||= { width: 1600, height: 1200, background: '#e6eee3', foreground: '#153b29',
-      title: '', subtitle: '', device: screen().width > 1000 ? 'laptop' : screen().width > 600 ? 'ipad' : 'iphone', arrangement: 'single', rotation: 0, crop: 0 };
-    return state.project[key];
+    if (!state.project[key]) state.project[key] = atlasComposition.defaults(state.project);
+    const c = state.project[key];
+    if (!c.screenOptions) c.screenOptions = {};
+    if (!Array.isArray(c.selectedIds)) {
+      c.selectedIds = state.project.snapshots.map(snapshot => snapshot.id);
+      for (const snapshot of state.project.snapshots) c.screenOptions[snapshot.id] ||= { device: snapshot.captureDevice || atlasComposition.defaultDevice(snapshot) };
+      delete c.device;
+    }
+    c.showText ??= Boolean(c.title || c.subtitle);
+    c.template ||= c.showText ? 'editorial' : 'gallery';
+    return c;
   }
-  async function updateConfig(key, value) {
-    if (['width', 'height'].includes(key) && (!Number.isFinite(value) || value < 128 || value > 8192)) throw new Error('Output dimensions must be between 128 and 8192 pixels.');
-    config()[key] = value;
-    await save();
-    await render();
+  function selectedScreens() { return atlasComposition.selected(state.project, config(), screen()); }
+  async function hydrateBrand(project) {
+    for (const snapshot of project.snapshots) {
+      const brand = snapshot.brand;
+      if (!brand?.logo || brand.logoAttempted) continue;
+      brand.logoAttempted = true;
+      const found = snapshot.images?.find(image => image.url === brand.logo);
+      try {
+        if (found) brand.logoData = await atlasRender.crop(snapshot, found);
+        else {
+          const result = await chrome.runtime.sendMessage({ type: 'studio-image', url: brand.logo });
+          if (result.data) brand.logoData = result.data;
+        }
+      } catch {}
+    }
+    const brand = project.snapshots.find(snapshot => snapshot.brand?.logoData)?.brand;
+    if (brand && project.composition && !project.composition.logo) { project.composition.logo = brand.logoData; project.composition.showLogo = true; }
   }
   function screenStrip() {
     const strip = make('div', 'snapshots');
     state.project.snapshots.forEach((snapshot, index) => {
-      const pick = button('', async () => { state.screen = index; state.layer = -1; await render(); });
+      const pick = button('', async () => {
+        state.screen = index; state.layer = -1;
+        if (['mockup', 'social'].includes(state.tool)) { config().selectedIds = [snapshot.id]; await save(); }
+        await render();
+      });
       pick.setAttribute('aria-current', String(index === state.screen));
       const image = make('img'); image.src = snapshot.screenshot; image.alt = snapshot.title;
       pick.append(image, make('span', '', snapshot.viewport ? snapshot.viewport + ' px' : snapshot.title));
@@ -123,16 +150,19 @@
     $('#backup').disabled = !state.project;
     $('#export').disabled = !state.project;
     $('#tools').replaceChildren(...tools.map(tool => {
-      const tab = button(tr(tool), async () => { state.tool = tool; await render(); });
+      const tab = button(tr(tool), async () => { clearTimeout(liveSaveTimer); liveSaveTimer = undefined; await save(); state.tool = tool; await render(); });
+      tab.dataset.tool = tool;
       if (tool === state.tool) tab.setAttribute('aria-current', 'page');
       return tab;
     }));
-    if (!state.project || state.tool === 'capture') { renderCapture(); return; }
+    if (!state.project && !['capture','section','responsive'].includes(state.tool)) state.tool = 'capture';
+    if (['capture','section','responsive'].includes(state.tool)) { renderCapture(); return; }
     surface(tr(state.tool));
     if (state.tool !== 'presentation') main.append(screenStrip());
     inspector.append(field(tr('name'), state.project.name, async value => { state.project.name = value.slice(0, 200); await save(); await listProjects(); $('#project-name').textContent = value; }));
     inspector.append(button(tr('delete'), async () => {
       if (!confirm(tr('confirmDelete'))) return;
+      clearTimeout(liveSaveTimer); liveSaveTimer = undefined;
       await pendingSave.catch(() => {});
       await atlasProjects.remove(state.project.id);
       state.tool = 'capture';
@@ -150,65 +180,163 @@
       canvas(root);
       renderLayerInspector();
     } else if (['mockup', 'social'].includes(state.tool)) {
-      const snapshots = [screen(), ...state.project.snapshots.filter(snapshot => snapshot !== screen())];
-      canvas(atlasRender.composition(snapshots, config()));
+      const snapshots = selectedScreens();
+      if (snapshots.length) canvas(atlasRender.composition(snapshots, config()));
+      else { main.append(make('p', 'empty', tr('chooseScreens'))); $('#export').disabled = true; }
       renderCompositionInspector();
     } else if (state.tool === 'presentation') await renderPresentation();
     else if (state.tool === 'assets') await renderAssets(token);
     else if (state.tool === 'prototype') renderPrototype();
   }
-  function renderCapture() {
-    const intro = make('section', 'intro');
-    intro.append(make('h1', '', tr('start')), make('p', '', tr('intro')));
-    const zone = make('div', 'import-zone');
-    zone.append(button(tr('upload'), () => $('#upload').click(), true), note('local'));
-    zone.addEventListener('dragover', event => { event.preventDefault(); });
-    zone.addEventListener('drop', event => { event.preventDefault(); action(() => importFiles(event.dataTransfer.files)); });
-    const form = make('form', 'capture-form');
-    const url = make('input'); url.type = 'url'; url.placeholder = 'https://'; url.required = true; url.setAttribute('aria-label', tr('url'));
-    const responsive = make('label', 'row');
-    const checkbox = make('input'); checkbox.type = 'checkbox'; responsive.append(checkbox, make('span', '', tr('responsive')));
-    const submit = button(tr('captureURL'), () => {}); submit.type = 'submit';
-    form.append(url, submit);
-    form.addEventListener('submit', event => {
-      event.preventDefault();
-      action(async () => {
-        notify(tr('busy'));
-        const result = await chrome.runtime.sendMessage({ type: 'capture-url', url: url.value, responsive: checkbox.checked });
-        if (result.error) throw new Error(result.error);
-        state.tool = 'mockup';
-        await selectProject(await atlasProjects.get(result.id));
-      }, submit);
+  function renderCapture() { captureStudio.render(); }
+
+  function redrawComposition() {
+    if (!['mockup', 'social'].includes(state.tool)) return;
+    const root = atlasComposition.composition(selectedScreens(), config());
+    const holder = main.querySelector('.canvas');
+    if (holder) { holder.replaceChildren(root); state.svg = root; }
+  }
+  let liveSaveTimer;
+  function liveField(label, key, type = 'text', options) {
+    const c = config();
+    const wrapper = make('label', 'field', label);
+    const input = make(options ? 'select' : type === 'textarea' ? 'textarea' : 'input');
+    if (options) for (const [value, title] of options) { const option = make('option', '', title); option.value = value; input.append(option); }
+    else if (type !== 'textarea') input.type = type;
+    if (type === 'color') {
+      const context = document.createElement('canvas').getContext('2d'); context.fillStyle = c[key] || '#ffffff';
+      const color = context.fillStyle;
+      const rgb = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(color);
+      input.value = color.startsWith('#') ? color : rgb ? '#' + rgb.slice(1).map(n => Number(n).toString(16).padStart(2, '0')).join('') : '#ffffff';
+    } else input.value = c[key] ?? '';
+    input.dataset.config = key;
+    if (type === 'range') { input.min = key === 'rotation' ? -15 : 0; input.max = key === 'rotation' ? 15 : 1; input.step = key === 'rotation' ? 1 : .01; }
+    input.addEventListener('input', () => {
+      const value = ['number', 'range'].includes(type) ? Number(input.value) : input.value;
+      if (['number', 'range'].includes(type) && (!input.value || !Number.isFinite(value))) return;
+      if (['width', 'height'].includes(key) && (value < 128 || value > 8192 || !Number.isInteger(value))) return;
+      c[key] = value;
+      if (key === 'background' && c.autoContrast !== false) {
+        c.foreground = atlasComposition.contrast(value);
+        const color = inspector.querySelector('[data-config=foreground]'); if (color) color.value = c.foreground;
+      }
+      if (key === 'foreground') {
+        c.autoContrast = false;
+        const toggle = inspector.querySelector('[data-toggle=contrast]'); if (toggle) toggle.checked = false;
+      }
+      redrawComposition();
+      const project = state.project;
+      $('#save-state').textContent = tr('saving');
+      clearTimeout(liveSaveTimer);
+      liveSaveTimer = setTimeout(() => {
+        liveSaveTimer = undefined;
+        if (state.project === project) save();
+        else atlasProjects.save(project).catch(error => notify(error.message));
+      }, 180);
     });
-    intro.append(zone, make('h2', '', tr('capture')), form, responsive, note('helpCapture'), make('h2', '', tr('figma')), note('figmaHelp'));
-    if (state.project) intro.append(button(tr('open') + ' · ' + state.project.name, async () => { state.tool = 'mockup'; await render(); }));
-    main.append(intro);
-    inspector.append(note('local'));
+    wrapper.append(input); return wrapper;
+  }
+  function toggleControl(label, value, change, id) {
+    const wrapper = make('label', 'toggle');
+    const input = make('input'); input.type = 'checkbox'; input.checked = value;
+    if (id) input.dataset.toggle = id;
+    input.addEventListener('change', () => action(() => change(input.checked)));
+    wrapper.append(make('span', '', label), input); return wrapper;
   }
   function renderCompositionInspector() {
     const c = config();
     const group = make('section', 'group');
-    group.append(field(tr('output'), 'custom', async key => {
-      if (!presets[key]) return;
-      [c.width, c.height] = presets[key];
+    const selections = make('div', 'screen-selections');
+    selections.append(make('h2', '', tr('screens')));
+    const actions = make('div', 'row');
+    actions.append(button(tr('allScreens'), async () => { c.selectedIds = state.project.snapshots.map(s => s.id); await save(); await render(); }),
+      button(tr('onlySelected'), async () => { c.selectedIds = [screen().id]; await save(); await render(); }));
+    selections.append(actions);
+    for (const snapshot of state.project.snapshots) {
+      const row = make('div', 'screen-choice');
+      row.append(toggleControl(snapshot.captureLabel || `${snapshot.viewport || snapshot.width} px`, c.selectedIds.includes(snapshot.id), async value => {
+        c.selectedIds = value ? [...new Set([...c.selectedIds, snapshot.id])] : c.selectedIds.filter(id => id !== snapshot.id);
+        await save(); await render();
+      }, snapshot.id));
+      if (c.selectedIds.includes(snapshot.id)) {
+        c.screenOptions[snapshot.id] ||= { device: snapshot.captureDevice || atlasComposition.defaultDevice(snapshot) };
+        row.append(field(tr('device'), c.screenOptions[snapshot.id].device, async value => { c.screenOptions[snapshot.id].device = value; await save(); await render(); }, 'select', Object.entries(atlasComposition.models).filter(([key]) => key !== 'laptop').map(([key, model]) => [key, model.name])));
+      }
+      selections.append(row);
+    }
+    group.append(selections);
+    group.append(toggleControl(tr('showText'), c.showText, async value => {
+      c.showText = value; c.template = value ? 'editorial' : 'gallery';
+      if (value && !c.title) c.title = screen().brand?.title || state.project.name;
+      if (value && !c.subtitle) c.subtitle = screen().brand?.description || '';
       await save(); await render();
+    }, 'text'));
+    const templates = make('div', 'template-grid');
+    for (const [key, template] of Object.entries(atlasComposition.templates).filter(([, template]) => template.text === c.showText)) {
+      const choice = button('', async () => { c.template = key; await save(); await render(); });
+      choice.dataset.template = key;
+      choice.setAttribute('aria-pressed', String(c.template === key));
+      const preview = atlasComposition.composition(selectedScreens(), { ...c, width: 480, height: 340, template: key });
+      preview.setAttribute('aria-hidden', 'true');
+      choice.append(preview, make('span', '', tr(key))); templates.append(choice);
+    }
+    group.append(templates);
+    if (c.showText) {
+      group.append(liveField(tr('title'), 'title'), liveField(tr('subtitle'), 'subtitle', 'textarea'));
+      const fonts = [...new Set([screen().brand?.fontFamily, ...((screen().typography || []).map(font => font.family)), 'Arial, sans-serif', 'Georgia, serif', 'system-ui'].filter(Boolean))];
+      group.append(liveField(tr('font'), 'fontFamily', 'select', fonts.map(font => [font, font.replaceAll('"', '')])));
+      group.append(liveField(tr('foreground'), 'foreground', 'color'));
+      group.append(toggleControl(tr('autoContrast'), c.autoContrast !== false, async value => {
+        c.autoContrast = value;
+        if (value) c.foreground = atlasComposition.contrast(c.background);
+        await save(); await render();
+      }, 'contrast'));
+    }
+    if (c.logo) group.append(toggleControl(tr('showLogo'), c.showLogo, async value => { c.showLogo = value; redrawComposition(); await save(); }, 'logo'));
+    const logoFile = make('input'); logoFile.type = 'file'; logoFile.accept = 'image/*'; logoFile.hidden = true;
+    logoFile.addEventListener('change', () => action(async () => {
+      const file = logoFile.files[0]; if (!file) return;
+      if (file.size > 5000000) throw new Error(tr('fileTooLarge'));
+      const url = URL.createObjectURL(file);
+      try {
+        const image = await atlasRender.loadImage(url);
+        const scale = Math.min(1, 1200 / Math.max(image.naturalWidth, image.naturalHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(image.naturalWidth * scale)); canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+        canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+        c.logo = canvas.toDataURL('image/png'); c.showLogo = true;
+        await save(); await render();
+      } finally { URL.revokeObjectURL(url); }
+    }));
+    group.append(button(tr('uploadLogo'), () => logoFile.click()), logoFile);
+    group.append(toggleControl(tr('transparent'), c.transparent, async value => { c.transparent = value; await save(); await render(); }, 'transparent'));
+    if (!c.transparent) {
+      group.append(liveField(tr('background'), 'background', 'color'));
+      const palette = make('div', 'brand-colors');
+      for (const color of [...new Set([screen().brand?.themeColor, ...(screen().colors || [])].filter(Boolean))].slice(0, 12)) {
+        const swatch = button('', async () => { c.background = color; c.foreground = atlasComposition.contrast(color); await save(); await render(); });
+        swatch.style.backgroundColor = color; swatch.title = color; swatch.setAttribute('aria-label', tr('background') + ' ' + color);
+        palette.append(swatch);
+      }
+      group.append(palette);
+    }
+    group.append(toggleControl(tr('camera'), c.camera !== false, async value => { c.camera = value; redrawComposition(); await save(); }, 'camera'),
+      liveField(tr('notch'), 'notch', 'select', ['island', 'notch', 'none'].map(key => [key, tr(key)])),
+      toggleControl(tr('shadow'), c.shadow !== false, async value => { c.shadow = value; redrawComposition(); await save(); }, 'shadow'),
+      liveField(tr('fit'), 'fit', 'select', [['cover', tr('cover')], ['contain', tr('contain')]]),
+      liveField(tr('crop'), 'crop', 'range'), liveField(tr('angle'), 'rotation', 'range'));
+    group.append(field(tr('output'), 'custom', async value => {
+      if (presets[value]) { [c.width, c.height] = presets[value]; await save(); await render(); }
     }, 'select', [['custom', tr('custom')], ...Object.keys(presets).map(key => [key, tr(key)])]));
     const size = make('div', 'row');
-    size.append(field(tr('width'), c.width, value => updateConfig('width', value), 'number'), field(tr('height'), c.height, value => updateConfig('height', value), 'number'));
-    group.append(size,
-      field(tr('device'), c.device, value => updateConfig('device', value), 'select', Object.entries(atlasRender.devices).map(([key, value]) => [key, value.name])),
-      field(tr('layout'), c.arrangement, value => updateConfig('arrangement', value), 'select', ['single', 'angled', 'mixed'].map(key => [key, tr(key)])),
-      field(tr('title'), c.title, value => updateConfig('title', value)),
-      field(tr('subtitle'), c.subtitle, value => updateConfig('subtitle', value)),
-      field(tr('background'), c.background, value => updateConfig('background', value), 'color'),
-      field(tr('foreground'), c.foreground, value => updateConfig('foreground', value), 'color'),
-      field(tr('angle'), c.rotation, value => { if (Math.abs(value) > 45) throw new Error('Choose an angle between -45 and 45.'); return updateConfig('rotation', value); }, 'number'),
-      field(tr('crop'), c.crop * 100, value => updateConfig('crop', Math.max(0, Math.min(100, value)) / 100), 'range'));
-    inspector.append(group, field(tr('template'), 'clean', async value => {
-      Object.assign(c, value === 'night' ? { background: '#122b24', foreground: '#e5f4d9', rotation: -6 } : value === 'warm' ? { background: '#f3e0c7', foreground: '#563b24', rotation: 5 } : { background: '#e6eee3', foreground: '#153b29', rotation: 0 });
-      await save(); await render();
-    }, 'select', ['clean', 'warm', 'night'].map(key => [key, tr(key)])), note('exportHelp'));
+    size.append(liveField(tr('width'), 'width', 'number'), liveField(tr('height'), 'height', 'number')); group.append(size);
+    inspector.append(group, button(tr('copyImage'), async () => {
+      if (!state.svg || !selectedScreens().length) throw new Error(tr('chooseScreens'));
+      const promise = atlasRender.raster(state.svg);
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': promise })]); notify(tr('copied'));
+    }), note('exportHelp'));
   }
+
   function renderLayerInspector() {
     inspector.querySelector('#layer-properties')?.remove();
     const group = make('section', 'group'); group.id = 'layer-properties';
@@ -511,7 +639,7 @@
   function exportDialog() {
     const body = showModal(tr('export'));
     body.append(note('exportHelp'));
-    const formats = ['png', 'jpeg', 'webp', 'svg'];
+    const formats = ['mockup', 'social'].includes(state.tool) && config().transparent ? ['png', 'webp', 'svg'] : ['png', 'jpeg', 'webp', 'svg'];
     let format = 'png';
     body.append(field(tr('format'), format, value => { format = value; }, 'select', formats.map(f => [f, f.toUpperCase()])));
     body.append(button(tr('export'), async () => {
@@ -544,7 +672,7 @@
         if (!chosen.size) throw new Error(tr('output'));
         for (const key of chosen) {
           const [width, height] = presets[key];
-          const root = atlasRender.composition([screen(), ...state.project.snapshots.filter(s => s !== screen())], { ...config(), width, height });
+          const root = atlasRender.composition(selectedScreens(), { ...config(), width, height });
           files.push({ name: `${key}.${format}`, blob: await exportBlob(root, format) });
         }
       } else for (const [index, snapshot] of state.project.snapshots.entries()) {
@@ -585,15 +713,22 @@
     if (state.project) $('#save-state').textContent = tr('saved');
     await render();
   }
+  const captureStudio = createAtlasCapture({ state, make, button, field, tr, main, inspector, notify, selectProject, render, save, hydrateBrand,
+    openUpload: files => files?.length ? action(() => importFiles(files)) : $('#upload').click() });
   $('#upload').addEventListener('change', () => action(() => importFiles($('#upload').files)));
-  $('#new').addEventListener('click', () => action(async () => { state.tool = 'capture'; await selectProject(null); }));
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && liveSaveTimer) { clearTimeout(liveSaveTimer); liveSaveTimer = undefined; save(); }
+  });
+  $('#new').addEventListener('click', () => action(async () => { await save(); state.tool = 'capture'; await selectProject(null); }));
   $('#backup').addEventListener('click', backup);
   $('#export').addEventListener('click', exportDialog);
   $('#theme').addEventListener('change', () => { document.documentElement.dataset.theme = $('#theme').value; chrome.storage.local.set({ theme: $('#theme').value }); });
   $('#language').addEventListener('change', () => { state.lang = $('#language').value; chrome.storage.local.set({ lang: state.lang }); action(applyLocale); });
   $('#modal').addEventListener('click', event => { if (event.target === $('#modal')) $('#modal').close(); });
   window.addEventListener('hashchange', () => action(async () => {
-    const id = new URLSearchParams(location.hash.slice(1)).get('project');
+    const params = new URLSearchParams(location.hash.slice(1));
+    if (params.has('capture')) { await captureStudio.route(params); await render(); return; }
+    const id = params.get('project');
     if (!id || id === state.project?.id) return;
     const project = await atlasProjects.get(id);
     if (project) { state.tool = 'mockup'; await selectProject(project); }
@@ -610,6 +745,7 @@
     document.documentElement.dataset.theme = preferences.theme;
     const id = new URLSearchParams(location.hash.slice(1)).get('project');
     if (id) { state.project = await atlasProjects.get(id); if (state.project) state.tool = 'mockup'; }
+    await captureStudio.route(new URLSearchParams(location.hash.slice(1)));
     await listProjects(); await applyLocale();
   });
 })();

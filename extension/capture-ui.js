@@ -11,6 +11,7 @@
     });
   });
   chrome.runtime.onMessage.addListener((message, sender, reply) => {
+    if (message.type === 'cancel-picker') { cleanup?.(); reply({ ok: true }); return; }
     if (message.type !== 'choose-element') return;
     cleanup?.();
     const host = document.createElement('page-atlas-picker');
@@ -37,12 +38,12 @@
       document.querySelector('[data-pageatlas-selected]')?.removeAttribute('data-pageatlas-selected');
       chosen.setAttribute('data-pageatlas-selected', '');
       cleanup();
-      chrome.runtime.sendMessage({ type: 'capture', mode: 'selection' }).then(result => {
+      chrome.runtime.sendMessage(message.token ? { type: 'selected-element', token: message.token } : { type: 'capture', mode: 'selection' }).then(result => {
         if (result?.error) alert(result.error);
       });
     }
     function key(event) {
-      if (event.key === 'Escape') { event.stopImmediatePropagation(); cleanup(); }
+      if (event.key === 'Escape') { event.stopImmediatePropagation(); cleanup(); if (message.token) chrome.runtime.sendMessage({ type: 'selection-cancel', token: message.token }); }
     }
     cleanup = () => {
       document.removeEventListener('pointermove', move, true);

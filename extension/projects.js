@@ -20,10 +20,29 @@ const atlasProjects = (() => {
       transaction.onabort = () => reject(transaction.error || new Error('Project save interrupted'));
     });
   }
+  async function update(id, mutate) {
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction('projects', 'readwrite');
+      const store = transaction.objectStore('projects');
+      const request = store.get(id);
+      let result;
+      request.onsuccess = () => {
+        try {
+          result = mutate(request.result);
+          if (result) store.put({ ...result, updatedAt: Date.now() });
+        } catch (error) { transaction.abort(); reject(error); }
+      };
+      transaction.oncomplete = () => resolve(result);
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error || new Error('Project update interrupted'));
+    });
+  }
   return {
     list: () => run('readonly', store => store.getAll()),
     get: id => run('readonly', store => store.get(id)),
     save: project => run('readwrite', store => store.put({ ...project, updatedAt: Date.now() })),
-    remove: id => run('readwrite', store => store.delete(id))
+    remove: id => run('readwrite', store => store.delete(id)),
+    update
   };
 })();

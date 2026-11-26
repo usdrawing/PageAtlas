@@ -103,73 +103,7 @@ const atlasRender = (() => {
     root.append(element);
     return lines.length * fontSize * 1.28;
   }
-  const devices = {
-    iphone: { width: 390, height: 844, frame: 15, radius: 46, name: 'iPhone' },
-    android: { width: 412, height: 892, frame: 12, radius: 31, name: 'Android' },
-    ipad: { width: 820, height: 1180, frame: 25, radius: 35, name: 'iPad' },
-    tablet: { width: 800, height: 1100, frame: 22, radius: 28, name: 'Tablet' },
-    laptop: { width: 1440, height: 900, frame: 28, radius: 22, name: 'Laptop' },
-    desktop: { width: 1600, height: 1000, frame: 24, radius: 16, name: 'Desktop' },
-    browser: { width: 1440, height: 900, frame: 14, radius: 12, name: 'Browser' },
-    flat: { width: 0, height: 0, frame: 0, radius: 6, name: 'Screenshot' }
-  };
-  function device(root, image, deviceName, x, y, targetWidth, rotation, index, imageSize, cropY = 0) {
-    const d = { ...(devices[deviceName] || devices.iphone) };
-    if (deviceName === 'flat') { d.width = imageSize.width; d.height = Math.min(imageSize.height, imageSize.width * 1.6); }
-    const scale = targetWidth / (d.width + d.frame * 2);
-    const w = d.width + d.frame * 2, h = d.height + d.frame * 2;
-    const group = node('g', { transform: `translate(${x} ${y}) rotate(${rotation} ${targetWidth / 2} ${h * scale / 2}) scale(${scale})` });
-    group.append(node('rect', { x: 8, y: 20, width: w, height: h, rx: d.radius + 3, fill: '#000000', opacity: .14, filter: 'url(#device-shadow)' }));
-    group.append(node('rect', { width: w, height: h, rx: d.radius, fill: '#171b1d', stroke: '#6b7479', 'stroke-width': 2 }));
-    const clipId = 'screen-' + index;
-    const defs = node('defs');
-    const clip = node('clipPath', { id: clipId });
-    clip.append(node('rect', { x: d.frame, y: d.frame, width: d.width, height: d.height, rx: Math.max(1, d.radius - d.frame) }));
-    defs.append(clip);
-    group.append(defs);
-    const screen = node('g', { 'clip-path': `url(#${clipId})` });
-    screen.append(node('rect', { x: d.frame, y: d.frame, width: d.width, height: d.height, fill: '#ffffff' }));
-    const scaledHeight = imageSize.height / imageSize.width * d.width;
-    screen.append(node('image', { x: d.frame, y: d.frame - Math.max(0, scaledHeight - d.height) * cropY,
-      width: d.width, height: scaledHeight, href: image, preserveAspectRatio: 'none' }));
-    group.append(screen);
-    if (deviceName === 'iphone') group.append(node('rect', { x: w / 2 - 58, y: d.frame + 9, width: 116, height: 29, rx: 15, fill: '#111315' }));
-    if (deviceName === 'android') group.append(node('circle', { cx: w / 2, cy: d.frame + 13, r: 5, fill: '#111315' }));
-    if (deviceName === 'laptop') group.append(node('path', { d: `M-60 ${h - 3} H${w + 60} L${w + 30} ${h + 25} H-30Z`, fill: '#bdc5c8', stroke: '#778086', 'stroke-width': 2 }));
-    if (deviceName === 'desktop') {
-      group.append(node('path', { d: `M${w * .44} ${h}H${w * .56}L${w * .59} ${h + 130}H${w * .41}Z`, fill: '#aab3b9' }));
-      group.append(node('rect', { x: w * .3, y: h + 127, width: w * .4, height: 15, rx: 7, fill: '#ccd1d4' }));
-    }
-    root.append(group);
-    return h * scale;
-  }
-  function composition(snapshots, config) {
-    const { width, height, background, title, subtitle, device: deviceName, arrangement = 'single', rotation = 0, crop = 0 } = config;
-    const root = svg(width, height, background);
-    const defs = node('defs');
-    const filter = node('filter', { id: 'device-shadow', x: '-30%', y: '-30%', width: '170%', height: '170%' });
-    filter.append(node('feGaussianBlur', { stdDeviation: 16 }));
-    defs.append(filter);
-    root.append(defs);
-    const padding = width * .075;
-    let top = height * .08;
-    if (title) top += textBlock(root, title, padding, top + width * .055, width - padding * 2, width * .055, config.foreground || '#143e2a', 700, 3) + height * .025;
-    if (subtitle) top += textBlock(root, subtitle, padding, top + width * .023, width - padding * 2, width * .023, config.foreground || '#143e2a', 400, 3) + height * .03;
-    const count = arrangement === 'single' ? 1 : Math.min(3, Math.max(2, snapshots.length));
-    const available = height - top - height * .08;
-    for (let index = 0; index < count; index++) {
-      const snapshot = snapshots[index % snapshots.length];
-      const name = arrangement === 'mixed' ? ['laptop', 'iphone', 'ipad'][index] : deviceName;
-      const d = devices[name] || devices.iphone;
-      const ratio = name === 'flat' ? Math.min(snapshot.height / snapshot.width, 1.6) : (d.height + d.frame * 2 + (name === 'desktop' ? 145 : 25)) / (d.width + d.frame * 2);
-      const cell = (width - padding * 2) / count;
-      const deviceWidth = Math.min(cell * (count === 1 ? .95 : .85), available / ratio);
-      const left = padding + cell * index + (cell - deviceWidth) / 2;
-      const angle = arrangement === 'angled' ? (index - (count - 1) / 2) * 9 : rotation;
-      device(root, snapshot.screenshot, name, left, top + (available - deviceWidth * ratio) / 2, deviceWidth, angle, index, snapshot, crop);
-    }
-    return root;
-  }
+  const devices = {};
   function slide(slide, theme = {}) {
     const root = svg(1600, 900, slide.background || theme.background || '#f4f6ef');
     const ink = slide.color || theme.color || '#153b29';
@@ -245,5 +179,5 @@ const atlasRender = (() => {
     ev.setUint32(0, 0x06054b50, true); ev.setUint16(8, files.length, true); ev.setUint16(10, files.length, true); ev.setUint32(12, centralSize, true); ev.setUint32(16, offset, true);
     return new Blob([...chunks, ...directory, end], { type: 'application/zip' });
   }
-  return { node, svg, safeImage, cleanSVG, loadImage, crop, editable, composition, slide, devices, serialize, raster, download, zip, textBlock };
+  return { node, svg, safeImage, cleanSVG, loadImage, crop, editable, slide, devices, serialize, raster, download, zip, textBlock };
 })();
